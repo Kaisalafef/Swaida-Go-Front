@@ -30,7 +30,6 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen>
   bool _isResending = false;
   String _userEmail = '';
 
-  // Pulse animation
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
 
@@ -38,7 +37,6 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen>
   void initState() {
     super.initState();
 
-    // Pulse animation
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
@@ -63,11 +61,9 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen>
         final verified = await _repo.checkEmailVerification();
         if (verified && mounted) {
           _pollTimer?.cancel();
-          context.go('/verify-phone');
+          context.go('/subscription-setup'); // ✅ تخطي تحقق الموبايل
         }
-      } catch (_) {
-        // Continue polling silently
-      }
+      } catch (_) {}
     });
   }
 
@@ -116,7 +112,6 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen>
             children: [
               const Spacer(),
 
-              // ── Animated email icon ──────────────────────
               ScaleTransition(
                 scale: _pulseAnimation,
                 child: Stack(
@@ -141,7 +136,6 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen>
 
               const SizedBox(height: 36),
 
-              // ── Title ────────────────────────────────────
               Text(
                 AppStrings.checkEmail,
                 textAlign: TextAlign.center,
@@ -154,7 +148,6 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen>
 
               const SizedBox(height: 14),
 
-              // ── "Sent to" line ───────────────────────────
               Text(
                 AppStrings.sentLinkTo,
                 textAlign: TextAlign.center,
@@ -178,7 +171,6 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen>
 
               const SizedBox(height: 10),
 
-              // ── Info text ────────────────────────────────
               Text(
                 AppStrings.clickLinkInfo,
                 textAlign: TextAlign.center,
@@ -191,7 +183,6 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen>
 
               const Spacer(),
 
-              // ── Resend button ────────────────────────────
               AppButton(
                 label: AppStrings.resendEmail,
                 onPressed: _resendEmail,
@@ -200,7 +191,6 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen>
 
               const SizedBox(height: 18),
 
-              // ── Polling status ───────────────────────────
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -225,7 +215,6 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen>
 
               const SizedBox(height: 24),
 
-              // ── Change email ─────────────────────────────
               TextButton(
                 onPressed: () => context.go('/register'),
                 child: Text(

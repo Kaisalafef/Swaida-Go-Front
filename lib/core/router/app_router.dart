@@ -6,17 +6,10 @@ import 'package:go_router/go_router.dart';
 import '../../features/auth/presentation/screens/splash_screen.dart';
 import '../../features/auth/presentation/screens/onboarding_screen.dart';
 import '../../features/auth/presentation/screens/register_screen.dart';
+import '../../features/auth/presentation/screens/login_screen.dart';
 import '../../features/auth/presentation/screens/email_verification_screen.dart';
-import '../../features/auth/presentation/screens/phone_verification_screen.dart';
 
 // Placeholder screens — replace with actual implementations
-class LoginScreen extends StatelessWidget {
-  const LoginScreen({super.key});
-  @override
-  Widget build(BuildContext context) =>
-      const Scaffold(body: Center(child: Text('شاشة تسجيل الدخول')));
-}
-
 class SubscriptionSetupScreen extends StatelessWidget {
   const SubscriptionSetupScreen({super.key});
   @override
@@ -40,7 +33,6 @@ final GoRouter appRouter = GoRouter(
   initialLocation: '/splash',
   debugLogDiagnostics: false,
   redirect: (BuildContext context, GoRouterState state) async {
-    // Only protect /home from unauthenticated access
     if (state.matchedLocation == '/home') {
       final token = await _storage.read(key: 'auth_token');
       if (token == null || token.isEmpty) return '/splash';
@@ -72,11 +64,6 @@ final GoRouter appRouter = GoRouter(
       path: '/verify-email',
       name: 'verify-email',
       builder: (context, state) => const EmailVerificationScreen(),
-    ),
-    GoRoute(
-      path: '/verify-phone',
-      name: 'verify-phone',
-      builder: (context, state) => const PhoneVerificationScreen(),
     ),
     GoRoute(
       path: '/subscription-setup',
