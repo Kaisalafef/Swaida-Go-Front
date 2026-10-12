@@ -43,7 +43,17 @@ dependencies:
   lottie: ^3.0.0
   flutter_dotenv: ^5.1.0
   intl: ^0.18.1
-
+  pdf: ^3.10.0
+  printing: ^5.12.0
+  excel: ^4.0.6
+  path_provider: ^2.1.4
+  url_launcher: ^6.3.1
+  webview_flutter: ^4.8.0
+  permission_handler: ^11.3.1
+  firebase_messaging: ^15.1.0
+  firebase_core: ^3.4.0
+  flutter_launcher_icons: ^0.14.4
+  open_filex: ^4.3.4
 
 dev_dependencies:
   flutter_test:
@@ -66,7 +76,7 @@ flutter:
   uses-material-design: true
   assets:
     - .env
-
+    - assets/
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg
@@ -97,3 +107,8 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/custom-fonts/#from-packages
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/icon.jpg"
+  min_sdk_android: 21

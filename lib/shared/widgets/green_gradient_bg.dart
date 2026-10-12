@@ -1,4 +1,5 @@
-// lib/shared/widgets/green_gradient_bg.dart
+// lib/shared/widgets/blue_gradient_bg.dart
+// (سابقاً green_gradient_bg.dart — تم تحديث الألوان للأزرق)
 import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
 

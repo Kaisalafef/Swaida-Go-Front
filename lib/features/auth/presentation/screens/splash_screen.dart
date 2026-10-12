@@ -1,4 +1,9 @@
 // lib/features/auth/presentation/screens/splash_screen.dart
+//
+// الإصلاح: يقرأ user_role من SecureStorage ويوجّه حسبه:
+//   - token موجود + role == 'admin'  → /admin/dashboard
+//   - token موجود + أي role آخر     → /home
+//   - لا token                       → /onboarding
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:go_router/go_router.dart';
@@ -54,7 +59,15 @@ class _SplashScreenState extends State<SplashScreen>
     if (!mounted) return;
 
     if (token != null && token.isNotEmpty) {
-      context.go('/home');
+      // ── قراءة الدور وتوجيه المستخدم للشاشة الصحيحة ──
+      final role = await _storage.read(key: 'user_role');
+      if (!mounted) return;
+
+      if (role == 'admin') {
+        context.go('/admin/dashboard');
+      } else {
+        context.go('/home');
+      }
     } else {
       context.go('/onboarding');
     }
@@ -133,7 +146,7 @@ class _SplashScreenState extends State<SplashScreen>
                         ],
                       ),
                       child: const Icon(
-                        Icons.eco_rounded,
+                        Icons.water_drop_rounded,
                         size: 60,
                         color: AppColors.primary,
                       ),

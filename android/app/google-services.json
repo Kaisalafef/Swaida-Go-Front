@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "194161753901",
+    "project_id": "swaida-go",
+    "storage_bucket": "swaida-go.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:194161753901:android:45ebb44fbdf7c757f75da4",
+        "android_client_info": {
+          "package_name": "com.example.swida_go"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCNjWD6mDMZ3pL01IU0klpxBjpkKf71NxA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

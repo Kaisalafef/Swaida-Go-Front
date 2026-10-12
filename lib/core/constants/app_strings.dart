@@ -23,7 +23,7 @@ class AppStrings {
       'اختر الأشهر التي تريد دفعها — شهر أو ثلاثة أو ستة دفعة واحدة. الحرية كاملة في يدك';
 
   static const String ob3Badge       = '03';
-  static const String ob3Title       = 'تابع مدفوعاتك بسهولة';
+  static const String ob3Title       = 'تطبيق مجاني مقدم من شركة FlashPay للحوالات المالية';
   static const String ob3Body        =
       'شبكة واضحة تُظهر جميع أشهرك — المدفوعة بعلامة خضراء، والمتأخرة باللون الأحمر، والقادمة في انتظارك';
 
