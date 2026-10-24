@@ -16,4 +16,11 @@ class AppColors {
   static const Color white        = Color(0xFFFFFFFF);
   static const Color error        = Color(0xFFD32F2F);
   static const Color errorLight   = Color(0xFFFFEBEE);
+
+  // ── تحذير / تنبيه (كان مكتوباً يدوياً في 4 ملفات بدرجات متفرقة) ──
+  static const Color warning       = Color(0xFFFF9900); // أيقونات وفواصل فقط (ليس نصاً)
+  static const Color warningLight  = Color(0xFFFFF4DC); // خلفية
+  static const Color warningBorder = Color(0xFFFFD580); // حدود
+  static const Color warningText   = Color(0xFF8D5A00); // نص (5:1 على warningLight)
+  static const Color warningDark   = Color(0xFF5A3E00); // نص ثانوي داكن
 }

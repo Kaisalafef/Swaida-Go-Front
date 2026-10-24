@@ -20,6 +20,7 @@ class AppTextField extends StatefulWidget {
     this.autofocus = false,
     this.textInputAction,
     this.onFieldSubmitted,
+    this.autofillHints,
   });
 
   final String label;
@@ -36,6 +37,9 @@ class AppTextField extends StatefulWidget {
   final bool autofocus;
   final TextInputAction? textInputAction;
   final ValueChanged<String>? onFieldSubmitted;
+
+  /// مثال: [AutofillHints.email] — يتيح لمدير كلمات المرور تعبئة الحقل.
+  final Iterable<String>? autofillHints;
 
   @override
   State<AppTextField> createState() => _AppTextFieldState();
@@ -67,6 +71,7 @@ class _AppTextFieldState extends State<AppTextField> {
       autofocus: widget.autofocus,
       textInputAction: widget.textInputAction,
       onFieldSubmitted: widget.onFieldSubmitted,
+      autofillHints: widget.autofillHints,
       style: GoogleFonts.cairo(
         fontSize: 15,
         color: AppColors.textDark,
@@ -81,13 +86,14 @@ class _AppTextFieldState extends State<AppTextField> {
         // Visibility toggle on the LEFT side for RTL
         suffixIcon: widget.obscureText
             ? IconButton(
-                icon: Icon(
-                  _obscure ? Icons.visibility_off_outlined : Icons.visibility_outlined,
-                  size: 20,
-                  color: AppColors.textMuted,
-                ),
-                onPressed: () => setState(() => _obscure = !_obscure),
-              )
+          tooltip: _obscure ? 'إظهار كلمة المرور' : 'إخفاء كلمة المرور',
+          icon: Icon(
+            _obscure ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+            size: 20,
+            color: AppColors.textMuted,
+          ),
+          onPressed: () => setState(() => _obscure = !_obscure),
+        )
             : null,
       ),
     );

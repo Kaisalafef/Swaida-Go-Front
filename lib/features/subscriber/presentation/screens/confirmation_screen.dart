@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/utils/formatters.dart';
 import '../../../../shared/widgets/app_button.dart';
 import '../../data/models/subscriber_models.dart';
 import '../../data/repositories/subscriber_repository.dart';
@@ -29,12 +30,6 @@ class _ConfirmationScreenState extends State<ConfirmationScreen>
   late Animation<double> _scaleAnim;
   late Animation<double> _fadeAnim;
   late Animation<Offset> _slideAnim;
-
-  // Arabic month names mapping
-  static const List<String> _arabicMonths = [
-    '', 'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
-    'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر',
-  ];
 
   @override
   void initState() {
@@ -82,9 +77,7 @@ class _ConfirmationScreenState extends State<ConfirmationScreen>
   }
 
   String _formatMonths(List<int> months) {
-    return months
-        .map((m) => (m >= 1 && m <= 12) ? _arabicMonths[m] : 'شهر $m')
-        .join('، ');
+    return months.map(Fmt.month).join('، ');
   }
 
   @override
@@ -92,7 +85,7 @@ class _ConfirmationScreenState extends State<ConfirmationScreen>
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
-        backgroundColor: const Color(0xFFF4F7F5),
+        backgroundColor: AppColors.secondary,
         body: SafeArea(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(24),
@@ -223,7 +216,7 @@ class _ConfirmationScreenState extends State<ConfirmationScreen>
                           const SizedBox(height: 12),
                           _infoRow(
                             'عدد الأشهر',
-                            '${widget.session.months.length} ${widget.session.months.length == 1 ? "شهر" : "أشهر"}',
+                            Fmt.months(widget.session.months.length),
                           ),
                           const SizedBox(height: 12),
                           _infoRow(
@@ -289,9 +282,7 @@ class _ConfirmationScreenState extends State<ConfirmationScreen>
                           spacing: 8,
                           runSpacing: 8,
                           children: widget.session.months.map((month) {
-                            final name = (month >= 1 && month <= 12)
-                                ? _arabicMonths[month]
-                                : 'شهر $month';
+                            final name = Fmt.month(month);
                             return Container(
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 14, vertical: 6),
@@ -356,11 +347,11 @@ class _ConfirmationScreenState extends State<ConfirmationScreen>
   }
 
   Widget _infoRow(
-    String label,
-    String value, {
-    Color? valueColor,
-    bool valueBold = false,
-  }) {
+      String label,
+      String value, {
+        Color? valueColor,
+        bool valueBold = false,
+      }) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -382,7 +373,10 @@ class _ConfirmationScreenState extends State<ConfirmationScreen>
               color: valueColor ?? AppColors.textDark,
             ),
             textAlign: TextAlign.left,
-            textDirection: TextDirection.ltr,
+            // المبالغ والأرقام فقط LTR؛ فرض LTR على الأشهر العربية كان يعكس ترتيبها.
+            textDirection: RegExp(r'^[\$#\d]').hasMatch(value)
+                ? TextDirection.ltr
+                : null,
           ),
         ),
       ],

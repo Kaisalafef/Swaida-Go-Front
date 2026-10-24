@@ -2,8 +2,11 @@
 //
 // تعمل بـ Polling كل 5 ثوانٍ على:
 //   GET /auth/email-verification-status?email=...
-// عند نجاح التوثيق → تنتقل لـ /verify-phone (وليس /subscription-setup)
-// لأن الـ Flow الصحيح: email ← phone ← subscription-setup
+// عند نجاح التوثيق → /home
+//
+// التصميم: AuthScaffold (نفس هوية الـ Splash/Onboarding).
+// تغييرات منطقية صغيرة: حارس لمنع تداخل طلبات الـ Polling ومنع التنقل المزدوج،
+// وإيقاف النبض عند تفعيل «تقليل الحركة».
 
 import 'dart:async';
 
@@ -14,7 +17,9 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_strings.dart';
+import '../../../../core/theme/brand_tokens.dart';
 import '../../../../shared/widgets/app_button.dart';
+import '../../../../shared/widgets/auth_scaffold.dart';
 import '../../data/repositories/auth_repository.dart';
 
 class EmailVerificationScreen extends StatefulWidget {
@@ -34,7 +39,12 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen>
 
   Timer? _pollTimer;
   bool _isResending = false;
+  bool _checking = false; // طلب Polling قيد التنفيذ
+  bool _navigated = false;
+  bool _didInit = false;
   String _userEmail = '';
+  int _cooldown = 0; // ثوانٍ متبقية قبل السماح بإعادة الإرسال
+  Timer? _cooldownTimer;
 
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
@@ -56,6 +66,16 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen>
     _startPolling();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_didInit) return;
+    _didInit = true;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _pulseController.stop();
+    }
+  }
+
   Future<void> _loadEmail() async {
     // نقرأ الإيميل المُخزَّن مؤقتاً بعد التسجيل
     final email = await _storage.read(key: 'pending_email') ?? '';
@@ -66,24 +86,31 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen>
   void _startPolling() {
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
+      if (_checking || _navigated) return; // لا تداخل بين الطلبات
+      _checking = true;
       try {
         final verified = await _repo.checkEmailVerification();
-        if (verified && mounted) {
+        if (verified && mounted && !_navigated) {
+          _navigated = true;
           _pollTimer?.cancel();
-          // ✅ البريد موثّق → الخطوة التالية: توثيق الهاتف
+          // ✅ البريد موثّق
           context.go('/home');
         }
       } catch (_) {
         // نتجاهل أخطاء الشبكة ونستمر بالـ Polling
+      } finally {
+        _checking = false;
       }
     });
   }
 
   Future<void> _resendEmail() async {
+    if (_isResending) return;
     setState(() => _isResending = true);
     try {
       await _repo.resendVerificationEmail();
       if (!mounted) return;
+      _startCooldown();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(AppStrings.emailResent, style: GoogleFonts.cairo()),
@@ -109,8 +136,23 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen>
     }
   }
 
+  /// يمنع الضغط المتكرر على «إعادة الإرسال» (30 ثانية).
+  void _startCooldown() {
+    _cooldownTimer?.cancel();
+    setState(() => _cooldown = 30);
+    _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted || _cooldown <= 1) {
+        t.cancel();
+        if (mounted) setState(() => _cooldown = 0);
+        return;
+      }
+      setState(() => _cooldown--);
+    });
+  }
+
   @override
   void dispose() {
+    _cooldownTimer?.cancel();
     _pollTimer?.cancel();
     _pulseController.dispose();
     super.dispose();
@@ -118,163 +160,152 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        backgroundColor: AppColors.secondary,
-        body: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Spacer(),
-
-                // ── أيقونة البريد النابضة ──────────────────
-                ScaleTransition(
-                  scale: _pulseAnimation,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      Container(
-                        width: 140,
-                        height: 140,
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: AppColors.primarySoft,
-                        ),
-                      ),
-                      const Icon(
-                        Icons.mark_email_read_outlined,
-                        size: 70,
-                        color: AppColors.primary,
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 36),
-
-                Text(
-                  AppStrings.checkEmail,
+    return AuthScaffold(
+      icon: Icons.mark_email_read_outlined,
+      title: AppStrings.checkEmail,
+      subtitle: AppStrings.sentLinkTo,
+      // Align في الخارج: النبض يكبّر البلاطة حول مركزها هي لا حول مركز الصف.
+      heroIcon: Align(
+        alignment: AlignmentDirectional.centerStart,
+        child: ScaleTransition(
+          scale: _pulseAnimation,
+          child: const AuthIconTile(
+            icon: Icons.mark_email_read_outlined,
+            size: 72,
+          ),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // عرض الإيميل المُخزَّن (يُخفى إن لم يُقرأ بعد بدل «...»)
+          if (_userEmail.isNotEmpty) ...[
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: AppColors.primarySoft,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Text(
+                  _userEmail,
                   textAlign: TextAlign.center,
-                  style: GoogleFonts.cairo(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.accent,
-                  ),
-                ),
-
-                const SizedBox(height: 14),
-
-                Text(
-                  AppStrings.sentLinkTo,
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.cairo(
-                    fontSize: 14,
-                    color: AppColors.textMuted,
-                  ),
-                ),
-
-                const SizedBox(height: 4),
-
-                // عرض الإيميل المُخزَّن
-                Text(
-                  _userEmail.isNotEmpty ? _userEmail : '...',
-                  textAlign: TextAlign.center,
+                  textDirection: TextDirection.ltr,
                   style: GoogleFonts.cairo(
                     fontSize: 15,
                     fontWeight: FontWeight.bold,
                     color: AppColors.primary,
                   ),
                 ),
+              ),
+            ),
 
-                const SizedBox(height: 10),
+            const SizedBox(height: 16),
 
-                Text(
-                  AppStrings.clickLinkInfo,
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.cairo(
-                    fontSize: 13,
-                    color: AppColors.textMuted,
-                    height: 1.7,
-                  ),
-                ),
+          ],
 
-                const SizedBox(height: 12),
-
-                // نص توضيحي للـ Flow
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: AppColors.primarySoft,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    ' توثيق البريداخر خطوة لانشاء حسابك الامن ',
-                    textAlign: TextAlign.center,
-                    style: GoogleFonts.cairo(
-                      fontSize: 13,
-                      color: AppColors.primary,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-
-                const Spacer(),
-
-                AppButton(
-                  label: AppStrings.resendEmail,
-                  onPressed: _resendEmail,
-                  isLoading: _isResending,
-                ),
-
-                const SizedBox(height: 18),
-
-                // مؤشر الـ Polling
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: AppColors.textMuted,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      AppStrings.checkingVerify,
-                      style: GoogleFonts.cairo(
-                        fontSize: 13,
-                        color: AppColors.textMuted,
-                      ),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 24),
-
-                TextButton(
-                  onPressed: () => context.go('/register'),
-                  child: Text(
-                    AppStrings.changeEmail,
-                    style: GoogleFonts.cairo(
-                      fontSize: 14,
-                      color: AppColors.textMuted,
-                      decoration: TextDecoration.underline,
-                      decorationColor: AppColors.textMuted,
-                    ),
-                  ),
-                ),
-
-                SizedBox(height: MediaQuery.of(context).padding.bottom + 16),
-              ],
+          Text(
+            AppStrings.clickLinkInfo,
+            textAlign: TextAlign.center,
+            style: GoogleFonts.cairo(
+              fontSize: 14,
+              color: Brand.bodyOnLight,
+              height: 1.7,
             ),
           ),
-        ),
+
+          const SizedBox(height: 16),
+
+          // نص توضيحي للـ Flow
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: AppColors.primarySoft,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.verified_user_outlined,
+                    size: 18,
+                    color: AppColors.primary,
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      'توثيق البريد هو آخر خطوة لإنشاء حسابك بأمان',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.cairo(
+                        fontSize: 13,
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 28),
+
+          // إعادة الإرسال إجراء ثانوي (التقدّم يحدث تلقائياً بالـ Polling)
+          AppButton(
+            label: _cooldown > 0
+                ? 'إعادة الإرسال بعد $_cooldown ث'
+                : AppStrings.resendEmail,
+            onPressed: _cooldown > 0 ? null : _resendEmail,
+            isLoading: _isResending,
+            outlined: true,
+          ),
+
+          const SizedBox(height: 20),
+
+          // مؤشر الـ Polling
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: AppColors.primary,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  AppStrings.checkingVerify,
+                  style: GoogleFonts.cairo(
+                    fontSize: 13,
+                    color: Brand.bodyOnLight,
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 8),
+
+          Align(
+            child: TextButton(
+              onPressed: () => context.go('/register'),
+              style: TextButton.styleFrom(minimumSize: const Size(48, 44)),
+              child: Text(
+                AppStrings.changeEmail,
+                style: GoogleFonts.cairo(
+                  fontSize: 14,
+                  color: Brand.bodyOnLight,
+                  decoration: TextDecoration.underline,
+                  decorationColor: Brand.bodyOnLight,
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

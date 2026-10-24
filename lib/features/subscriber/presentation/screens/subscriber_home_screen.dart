@@ -1,12 +1,16 @@
 // lib/features/subscriber/presentation/screens/subscriber_home_screen.dart
 
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/utils/formatters.dart';
+import '../../../../shared/widgets/app_dialogs.dart';
 import '../../data/models/subscriber_models.dart';
 import '../../data/repositories/subscriber_repository.dart';
+import 'widgets/year_transition_views.dart';
 
 class SubscriberHomeScreen extends StatefulWidget {
   const SubscriberHomeScreen({super.key});
@@ -18,10 +22,26 @@ class SubscriberHomeScreen extends StatefulWidget {
 class _SubscriberHomeScreenState extends State<SubscriberHomeScreen>
     with SingleTickerProviderStateMixin {
   final _repo = SubscriberRepository();
+  final _storage = const FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+  );
 
   UserProfile? _profile;
   bool _isLoading = true;
   final Set<int> _selectedMonths = {};
+
+  // ── بداية سنة جديدة (متأخرات إجبارية / تجديد / تغيير / إيقاف) ──
+  YearStatus? _yearStatus;
+  bool _actionBusy = false;
+  bool _paying = false; // جلسة دفع قيد الإنشاء (يمنع الضغط المزدوج)
+  bool _loggingOut = false;
+
+  bool get _isGated {
+    final s = _yearStatus?.state;
+    return s == YearState.mustPay ||
+        s == YearState.choose ||
+        s == YearState.stopped;
+  }
 
   // ── العمولة — تُجلب من الـ API ─────────────────────
   double _commissionRate = 0.0; // نسبة مئوية مثل 10.0
@@ -58,11 +78,14 @@ class _SubscriberHomeScreenState extends State<SubscriberHomeScreen>
       final results = await Future.wait([
         _repo.getUserProfile(),
         _repo.getCommission(),
+        _loadYearStatus(),
       ]);
       if (mounted) {
         setState(() {
           _profile = results[0] as UserProfile;
           _commissionRate = results[1] as double;
+          _yearStatus = results[2] as YearStatus?;
+          if (_isGated) _selectedMonths.clear();
         });
         _animController.forward(from: 0);
       }
@@ -70,6 +93,66 @@ class _SubscriberHomeScreenState extends State<SubscriberHomeScreen>
       if (mounted) _showError(e.toString());
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // فشل جلب حالة السنة لا يمنع فتح الشاشة (الخادم يبقى المرجع عند الدفع)
+  Future<YearStatus?> _loadYearStatus() async {
+    try {
+      return await _repo.getYearStatus();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // دفع متأخرات السنوات السابقة بمعرّفات الدفعات (لا بأرقام الأشهر، لاختلاف السنوات)
+  Future<void> _payOverdue() async {
+    final ys = _yearStatus;
+    if (ys == null || ys.overdueIds.isEmpty || _actionBusy) return;
+
+    setState(() => _actionBusy = true);
+    try {
+      final session = await _repo.initiatePayment(paymentIds: ys.overdueIds);
+      if (mounted) context.go('/payment', extra: session);
+    } catch (e) {
+      if (mounted) _showError(e.toString());
+    } finally {
+      if (mounted) setState(() => _actionBusy = false);
+    }
+  }
+
+  // annualAmount == null → تجديد بنفس المبلغ، وإلا تغيير الباقة ثم التجديد
+  Future<void> _renewSubscription({double? annualAmount}) async {
+    if (_actionBusy) return;
+
+    setState(() => _actionBusy = true);
+    try {
+      await _repo.renewSubscription(annualAmount: annualAmount);
+      if (!mounted) return;
+      _showSuccess(annualAmount == null
+          ? 'تم تجديد اشتراكك للسنة الجديدة'
+          : 'تم تغيير الباقة وتجديد الاشتراك');
+      await _loadData();
+    } catch (e) {
+      if (mounted) _showError(e.toString());
+    } finally {
+      if (mounted) setState(() => _actionBusy = false);
+    }
+  }
+
+  Future<void> _stopSubscription() async {
+    if (_actionBusy) return;
+
+    setState(() => _actionBusy = true);
+    try {
+      await _repo.stopSubscription();
+      if (!mounted) return;
+      _showSuccess('تم إيقاف الاشتراك');
+      await _loadData();
+    } catch (e) {
+      if (mounted) _showError(e.toString());
+    } finally {
+      if (mounted) setState(() => _actionBusy = false);
     }
   }
 
@@ -85,7 +168,9 @@ class _SubscriberHomeScreenState extends State<SubscriberHomeScreen>
   }
 
   Future<void> _initiatePayment() async {
-    if (_selectedMonths.isEmpty) return;
+    // _paying: الضغط المزدوج كان ينشئ جلستي دفع.
+    if (_selectedMonths.isEmpty || _paying) return;
+    setState(() => _paying = true);
 
     try {
       final session = await _repo.initiatePayment(
@@ -96,7 +181,35 @@ class _SubscriberHomeScreenState extends State<SubscriberHomeScreen>
       }
     } catch (e) {
       if (mounted) _showError(e.toString());
+    } finally {
+      if (mounted) setState(() => _paying = false);
     }
+  }
+
+  /// تسجيل الخروج من الشاشات الإجبارية (متأخرات/تجديد) التي لا تصل منها للملف الشخصي.
+  Future<void> _logout() async {
+    if (_loggingOut) return;
+    final ok = await showConfirmDialog(
+      context,
+      title: 'تسجيل الخروج',
+      message: 'هل تريد إنهاء جلستك الحالية؟',
+      confirmLabel: 'تسجيل الخروج',
+      destructive: true,
+    );
+    if (!ok || !mounted) return;
+    _loggingOut = true;
+    await _storage.deleteAll();
+    if (mounted) context.go('/login');
+  }
+
+  void _showSuccess(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message, style: GoogleFonts.cairo()),
+      backgroundColor: AppColors.success,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      margin: const EdgeInsets.all(16),
+    ));
   }
 
   void _showError(String message) {
@@ -140,7 +253,7 @@ class _SubscriberHomeScreenState extends State<SubscriberHomeScreen>
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
-        backgroundColor: const Color(0xFFF4F7F5),
+        backgroundColor: AppColors.secondary,
         body: _isLoading
             ? const Center(
             child: CircularProgressIndicator(color: AppColors.primary))
@@ -153,7 +266,7 @@ class _SubscriberHomeScreenState extends State<SubscriberHomeScreen>
             child: _buildBody(),
           ),
         ),
-        floatingActionButton: _selectedMonths.isNotEmpty
+        floatingActionButton: _selectedMonths.isNotEmpty && !_isGated
             ? _buildPayFAB()
             : null,
         floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
@@ -188,6 +301,30 @@ class _SubscriberHomeScreenState extends State<SubscriberHomeScreen>
   }
 
   Widget _buildBody() {
+    // ── بداية سنة جديدة: تحجب الشاشة العادية حتى تُحسم ──────
+    final ys = _yearStatus;
+    if (ys != null && ys.state == YearState.mustPay) {
+      return YearMustPayView(
+        status: ys,
+        commissionRate: _commissionRate,
+        fixedFee: _fixedFee,
+        busy: _actionBusy,
+        onPay: _payOverdue,
+        onLogout: _logout,
+      );
+    }
+    if (ys != null &&
+        (ys.state == YearState.choose || ys.state == YearState.stopped)) {
+      return YearRenewalView(
+        status: ys,
+        busy: _actionBusy,
+        onRenew: () => _renewSubscription(),
+        onChange: (v) => _renewSubscription(annualAmount: v),
+        onStop: _stopSubscription,
+        onLogout: _logout,
+      );
+    }
+
     final profile = _profile!;
     final sub = profile.subscription;
 
@@ -668,7 +805,7 @@ class _SubscriberHomeScreenState extends State<SubscriberHomeScreen>
         child: DecoratedBox(
           decoration: BoxDecoration(
             gradient: const LinearGradient(
-              colors: [AppColors.primaryLight, AppColors.primary],
+              colors: [AppColors.primary, AppColors.accent], // أغمق: أبيض 12px عليه ≥ 5.7:1
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
@@ -696,25 +833,40 @@ class _SubscriberHomeScreenState extends State<SubscriberHomeScreen>
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.payment_rounded, color: AppColors.white, size: 20),
-                    const SizedBox(width: 8),
-                    Text(
-                      'ادفع \$${_selectedTotal.toStringAsFixed(2)} — ${_selectedMonths.length} ${_selectedMonths.length == 1 ? "شهر" : "أشهر"}',
-                      style: GoogleFonts.cairo(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15,
+                    _paying
+                        ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
                         color: AppColors.white,
+                      ),
+                    )
+                        : const Icon(Icons.payment_rounded, color: AppColors.white, size: 20),
+                    const SizedBox(width: 8),
+                    // Flexible: الخط الكبير/الشاشة الضيقة كان يسبب overflow
+                    Flexible(
+                      child: Text(
+                        'ادفع ${Fmt.money2(_selectedTotal)} — ${Fmt.months(_selectedMonths.length)}',
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.cairo(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                          color: AppColors.white,
+                        ),
                       ),
                     ),
                   ],
                 ),
                 // السطر الثاني: تفاصيل الرسوم
                 const SizedBox(height: 3),
+                // \u2066…\u2069: يعزل كل رقم (LTR) فلا تنقلب علامات + في السياق العربي
                 Text(
-                  '\$${_selectedBase.toStringAsFixed(2)} + ${_commissionRate.toStringAsFixed(0)}% عمولة + \$${_selectedFixedFee.toStringAsFixed(2)} رسم',
+                  '\u2066${Fmt.money2(_selectedBase)}\u2069 + \u2066${_commissionRate.toStringAsFixed(0)}%\u2069 عمولة + \u2066${Fmt.money2(_selectedFixedFee)}\u2069 رسم',
+                  textAlign: TextAlign.center,
                   style: GoogleFonts.cairo(
-                    fontSize: 10,
-                    color: AppColors.white.withOpacity(0.75),
+                    fontSize: 12,
+                    color: AppColors.white.withOpacity(0.92),
                   ),
                 ),
               ],

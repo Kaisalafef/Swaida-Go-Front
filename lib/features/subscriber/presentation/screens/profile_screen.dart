@@ -6,6 +6,8 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/utils/formatters.dart';
+import '../../../../shared/widgets/app_dialogs.dart';
 import '../../data/models/subscriber_models.dart';
 import '../../data/repositories/subscriber_repository.dart';
 
@@ -30,11 +32,6 @@ class _ProfileScreenState extends State<ProfileScreen>
   late AnimationController _animController;
   late Animation<double> _fadeAnim;
   late Animation<Offset> _slideAnim;
-
-  static const List<String> _arabicMonths = [
-    '', 'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
-    'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر',
-  ];
 
   @override
   void initState() {
@@ -72,7 +69,39 @@ class _ProfileScreenState extends State<ProfileScreen>
     }
   }
 
+  Future<void> _openEditProfile() async {
+    await context.push('/edit-profile');
+    if (mounted) _loadProfile(); // يعكس أي تعديل (الاسم، الهاتف، طلب بريد معلّق)
+  }
+
+  Future<void> _openChangePackage() async {
+    final changed = await context.push<bool>('/change-package');
+    if (changed == true && mounted) {
+      _loadProfile();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('تم تغيير الباقة بنجاح', style: GoogleFonts.cairo()),
+        backgroundColor: AppColors.success,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.all(16),
+      ));
+    }
+  }
+
+  bool _loggingOut = false;
+
+  /// كان الخروج فورياً بلمسة واحدة (الأيقونة بجوار الرجوع + زر المنطقة الحمراء).
   Future<void> _logout() async {
+    if (_loggingOut) return;
+    final ok = await showConfirmDialog(
+      context,
+      title: 'تسجيل الخروج',
+      message: 'هل تريد إنهاء جلستك الحالية؟',
+      confirmLabel: 'تسجيل الخروج',
+      destructive: true,
+    );
+    if (!ok || !mounted) return;
+    _loggingOut = true;
     await _storage.deleteAll();
     if (mounted) context.go('/login');
   }
@@ -88,9 +117,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   String _formatMonths(List<int> months) {
-    return months
-        .map((m) => (m >= 1 && m <= 12) ? _arabicMonths[m] : 'شهر $m')
-        .join('، ');
+    return months.map(Fmt.month).join('، ');
   }
 
   int get _paidCount {
@@ -105,7 +132,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
-        backgroundColor: const Color(0xFFF4F7F5),
+        backgroundColor: AppColors.secondary,
         body: _isLoading
             ? const Center(
             child: CircularProgressIndicator(color: AppColors.primary))
@@ -182,6 +209,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                 child: const Icon(Icons.logout_rounded,
                     color: AppColors.white, size: 18),
               ),
+              tooltip: 'تسجيل الخروج',
               onPressed: _logout,
             ),
             const SizedBox(width: 8),
@@ -342,6 +370,26 @@ class _ProfileScreenState extends State<ProfileScreen>
                             ),
                           ],
                         ),
+                        const SizedBox(height: 14),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: _openChangePackage,
+                            icon: const Icon(Icons.tune_rounded, size: 18),
+                            label: Text(
+                              'تعديل الباقة (زيادة أو تقليل)',
+                              style: GoogleFonts.cairo(
+                                  fontWeight: FontWeight.w600, fontSize: 13),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppColors.primary,
+                              side: const BorderSide(color: AppColors.border),
+                              minimumSize: const Size.fromHeight(48),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12)),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -352,6 +400,16 @@ class _ProfileScreenState extends State<ProfileScreen>
                 _SectionCard(
                   title: 'معلومات الحساب',
                   icon: Icons.person_outline_rounded,
+                  trailing: TextButton.icon(
+                    onPressed: _openEditProfile,
+                    icon: const Icon(Icons.edit_rounded, size: 16),
+                    label: Text('تعديل',
+                        style: GoogleFonts.cairo(
+                            fontWeight: FontWeight.w600, fontSize: 13)),
+                    style: TextButton.styleFrom(
+                        foregroundColor: AppColors.primary,
+                        minimumSize: const Size(48, 40)),
+                  ),
                   child: Column(
                     children: [
                       _InfoRow(label: 'الاسم الكامل', value: user.fullName),
@@ -368,7 +426,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                   title: 'سجل الدفعات',
                   icon: Icons.receipt_long_rounded,
                   trailing: Text(
-                    '${history.length} دفعات',
+                    Fmt.payments(history.length),
                     style: GoogleFonts.cairo(fontSize: 13, color: AppColors.textMuted),
                   ),
                   child: _isLoadingHistory
@@ -417,28 +475,30 @@ class _ProfileScreenState extends State<ProfileScreen>
                     borderRadius: BorderRadius.circular(16),
                   ),
                   child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'تسجيل الخروج',
-                            style: GoogleFonts.cairo(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                              color: AppColors.error,
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'تسجيل الخروج',
+                              style: GoogleFonts.cairo(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                                color: AppColors.error,
+                              ),
                             ),
-                          ),
-                          Text(
-                            'سيتم إنهاء جلستك الحالية',
-                            style: GoogleFonts.cairo(
-                              fontSize: 12,
-                              color: AppColors.error.withOpacity(0.7),
+                            Text(
+                              'سيتم إنهاء جلستك الحالية',
+                              style: GoogleFonts.cairo(
+                                fontSize: 12,
+                                color: AppColors.error.withOpacity(0.7),
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
+                      const SizedBox(width: 12),
                       OutlinedButton(
                         onPressed: _logout,
                         style: OutlinedButton.styleFrom(
@@ -510,26 +570,30 @@ class _SectionCard extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: AppColors.primarySoft,
-                      borderRadius: BorderRadius.circular(10),
+              Expanded(
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: AppColors.primarySoft,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(icon, color: AppColors.primary, size: 18),
                     ),
-                    child: Icon(icon, color: AppColors.primary, size: 18),
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    title,
-                    style: GoogleFonts.cairo(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                      color: AppColors.accent,
+                    const SizedBox(width: 10),
+                    Flexible(
+                      child: Text(
+                        title,
+                        style: GoogleFonts.cairo(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                          color: AppColors.accent,
+                        ),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
               trailing ?? const SizedBox.shrink(),
             ],
@@ -556,18 +620,23 @@ class _InfoRow extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             label,
             style: GoogleFonts.cairo(fontSize: 13, color: AppColors.textMuted),
           ),
-          Text(
-            value,
-            style: GoogleFonts.cairo(
-              fontWeight: FontWeight.bold,
-              fontSize: 13,
-              color: AppColors.textDark,
+          const SizedBox(width: 12),
+          // Expanded: البريد أو الاسم الطويل يلتف بدل overflow
+          Expanded(
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: GoogleFonts.cairo(
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+                color: AppColors.textDark,
+              ),
             ),
           ),
         ],

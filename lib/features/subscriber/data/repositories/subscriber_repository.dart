@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../models/subscriber_models.dart';
+import '../../../../core/network/session_guard.dart';
 
 // ── تغيير هذا السطر فقط عند الانتقال للـ API الحقيقي ──────
 const bool _kUseMock = false;
@@ -43,6 +44,9 @@ class SubscriberRepository {
         onError: (error, handler) => handler.next(error),
       ),
     );
+
+    // 401 → مسح الجلسة والعودة تلقائياً لشاشة الدخول (انظر core/network/session_guard.dart)
+    _dio.interceptors.add(SessionExpiredInterceptor());
   }
 
   late final Dio _dio;
@@ -155,12 +159,106 @@ class SubscriberRepository {
   }
 
   // ══════════════════════════════════════════════════════
+  //  PROFILE EDIT (تعديل الملف الشخصي)
+  // ══════════════════════════════════════════════════════
+  /// PATCH /profile — الاسم والهاتف (يُرسل ما تغيّر فقط)
+  Future<void> updateProfile({String? fullName, String? phone}) async {
+    try {
+      final response = await _dio.patch('/profile', data: {
+        if (fullName != null) 'full_name': fullName,
+        if (phone != null) 'phone': phone,
+      });
+      // نُحدّث النسخة المحلية التي تقرأ منها شاشات أخرى (التحية، الدفع…)
+      final user = _parseResponse(response.data)['user'];
+      if (user is Map) {
+        if (user['full_name'] != null) {
+          await _storage.write(
+              key: 'user_full_name', value: user['full_name'].toString());
+        }
+        if (user['phone'] != null) {
+          await _storage.write(
+              key: 'user_phone', value: user['phone'].toString());
+        }
+      }
+    } on DioException catch (e) {
+      throw SubscriberException(_mapDioError(e));
+    }
+  }
+
+  /// POST /profile/password
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    try {
+      await _dio.post('/profile/password', data: {
+        'current_password': currentPassword,
+        'password': newPassword,
+      });
+    } on DioException catch (e) {
+      throw SubscriberException(_mapDioError(e));
+    }
+  }
+
+  /// POST /profile/email — يرسل رابط تأكيد إلى البريد الجديد
+  Future<String> requestEmailChange({
+    required String newEmail,
+    required String currentPassword,
+  }) async {
+    try {
+      final response = await _dio.post('/profile/email', data: {
+        'email': newEmail,
+        'current_password': currentPassword,
+      });
+      return (_parseResponse(response.data)['message'] ?? '').toString();
+    } on DioException catch (e) {
+      throw SubscriberException(_mapDioError(e));
+    }
+  }
+
+  // ══════════════════════════════════════════════════════
+  //  PACKAGE CHANGE (زيادة / تقليل الباقة)
+  // ══════════════════════════════════════════════════════
+  /// معاينة الأثر دون حفظ أي شيء
+  Future<PackageChangePlan> previewPackageChange({
+    required double annualAmount,
+  }) async {
+    try {
+      final response = await _dio.post('/subscription/change-preview',
+          data: {'annual_amount': annualAmount});
+      return PackageChangePlan.fromJson(_parseResponse(response.data));
+    } on DioException catch (e) {
+      throw SubscriberException(_mapDioError(e));
+    }
+  }
+
+  /// تنفيذ التغيير فعلياً
+  Future<PackageChangePlan> changePackage({
+    required double annualAmount,
+  }) async {
+    try {
+      final response = await _dio
+          .post('/subscription/change', data: {'annual_amount': annualAmount});
+      return PackageChangePlan.fromJson(_parseResponse(response.data));
+    } on DioException catch (e) {
+      throw SubscriberException(_mapDioError(e));
+    }
+  }
+
+  // ══════════════════════════════════════════════════════
   //  INITIATE PAYMENT
   // ══════════════════════════════════════════════════════
-  Future<PaymentSession> initiatePayment({required List<int> months}) async {
+  //  months      : أشهر السنة الحالية.
+  //  paymentIds   : دفعات محددة بمعرّفها (متأخرات سنوات سابقة).
+  //  يُرسل واحد منهما فقط؛ paymentIds له الأولوية إن وُجد.
+  Future<PaymentSession> initiatePayment({
+    List<int> months = const [],
+    List<int> paymentIds = const [],
+  }) async {
     if (_kUseMock) {
       await _mockDelay();
-      final total = months.length * _mockSubscription.monthlyAmount;
+      final count = paymentIds.isNotEmpty ? paymentIds.length : months.length;
+      final total = count * _mockSubscription.monthlyAmount;
       return PaymentSession(
         checkoutUrl: 'https://checkout.paddle.com/mock',
         months: months,
@@ -169,11 +267,58 @@ class SubscriberRepository {
     }
 
     try {
-      final response = await _dio.post('/payment/initiate', data: {
-        'months': months,
-      });
+      final response = await _dio.post('/payment/initiate',
+          data: paymentIds.isNotEmpty
+              ? {'payment_ids': paymentIds}
+              : {'months': months});
       final data = _parseResponse(response.data);
       return PaymentSession.fromJson(data);
+    } on DioException catch (e) {
+      throw SubscriberException(_mapDioError(e));
+    }
+  }
+
+  // ══════════════════════════════════════════════════════
+  //  YEAR STATUS — بداية سنة جديدة
+  //  must_pay | choose | stopped | ok | no_subscription
+  // ══════════════════════════════════════════════════════
+  Future<YearStatus> getYearStatus() async {
+    if (_kUseMock) {
+      await _mockDelay(200);
+      return YearStatus.fromJson({'state': 'ok'});
+    }
+
+    try {
+      final response = await _dio.get('/subscription/year-status');
+      return YearStatus.fromJson(_parseResponse(response.data));
+    } on DioException catch (e) {
+      throw SubscriberException(_mapDioError(e));
+    }
+  }
+
+  // annualAmount == null → تجديد بنفس المبلغ، وإلا تغيير الباقة ثم التجديد
+  Future<void> renewSubscription({double? annualAmount}) async {
+    if (_kUseMock) {
+      await _mockDelay();
+      return;
+    }
+
+    try {
+      await _dio.post('/subscription/renew',
+          data: annualAmount == null ? <String, dynamic>{} : {'annual_amount': annualAmount});
+    } on DioException catch (e) {
+      throw SubscriberException(_mapDioError(e));
+    }
+  }
+
+  Future<void> stopSubscription() async {
+    if (_kUseMock) {
+      await _mockDelay();
+      return;
+    }
+
+    try {
+      await _dio.post('/subscription/stop');
     } on DioException catch (e) {
       throw SubscriberException(_mapDioError(e));
     }
@@ -271,6 +416,7 @@ class SubscriberRepository {
     final serverMessage = rawData['message'];
 
     if (status == 401) return 'انتهت الجلسة. يرجى تسجيل الدخول مجدداً.';
+    if (status == 429) return 'محاولات كثيرة. انتظر دقيقة ثم أعد المحاولة.';
     if (status == 422) {
       if (serverMessage is String && _isArabic(serverMessage)) return serverMessage;
       final errors = rawData['errors'];

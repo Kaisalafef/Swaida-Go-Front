@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../models/admin_models.dart';
+import '../../../../core/network/session_guard.dart';
 
 class AdminException implements Exception {
   final String message;
@@ -39,6 +40,9 @@ class AdminRepository {
         onError: (error, handler) => handler.next(error),
       ),
     );
+
+    // 401 → مسح الجلسة والعودة تلقائياً لشاشة الدخول (انظر core/network/session_guard.dart)
+    _dio.interceptors.add(SessionExpiredInterceptor());
   }
 
   late final Dio _dio;
@@ -81,7 +85,6 @@ class AdminRepository {
           .map((e) => _subscriberFromJson(e as Map<String, dynamic>))
           .toList();
     } on DioException catch (e) {
-      print(e);
       throw AdminException(_mapDioError(e));
     }
   }
@@ -205,6 +208,7 @@ class AdminRepository {
       annualAmount: (json['annual_amount'] as num).toDouble(),
       monthlyAmount: (json['monthly_amount'] as num).toDouble(),
       months: months,
+      paidTotal: (json['paid_total'] as num?)?.toDouble() ?? 0,
     );
   }
 
@@ -220,25 +224,112 @@ class AdminRepository {
   }
 // داخل ملف admin_repository.dart
 
+  /// الخادم يتوقع entries = [{year, months}] — الشكل القديم (year/months في الجذر) كان يُرفض بخطأ 422.
   Future<void> markHistoricalPaid({
     required int userId,
     required int year,
     required List<int> months,
-    double? customAmount, // إضافة هذا الحقل
+    double? customAmount,
     String? note,
   }) async {
     try {
       await _dio.post('/admin/mark-historical-paid', data: {
         'user_id': userId,
-        'year': year,
-        'months': months,
-        'custom_amount': customAmount, // إرساله للسيرفر
-        'note': note,
+        'entries': [
+          {'year': year, 'months': months},
+        ],
+        if (customAmount != null) 'custom_amount': customAmount,
+        if (note != null) 'note': note,
       });
     } on DioException catch (e) {
       throw AdminException(_mapDioError(e));
     }
   }
+
+  // ── getYearlyReport ───────────────────────────────────────
+  // GET /api/admin/yearly-report?year=
+  Future<YearlyReport> getYearlyReport({required int year}) async {
+    try {
+      final response =
+      await _dio.get('/admin/yearly-report', queryParameters: {'year': year});
+      return YearlyReport.fromJson(_parseResponse(response.data));
+    } on DioException catch (e) {
+      throw AdminException(_mapDioError(e));
+    }
+  }
+
+  // ── getReportYears ────────────────────────────────────────
+  // GET /api/admin/report-years  → السنوات الموجودة فعلاً في البيانات
+  // عند الفشل نرجع السنة الحالية فقط حتى لا تتعطل الشاشة.
+  Future<List<int>> getReportYears() async {
+    try {
+      final response = await _dio.get('/admin/report-years');
+      final list = _parseResponse(response.data)['years'] as List?;
+      final years = (list ?? const []).map((e) => (e as num).toInt()).toList();
+      if (years.isNotEmpty) return years;
+    } catch (_) {}
+    return [DateTime.now().year];
+  }
+
+  // ── Staff (الأدمن فقط) ────────────────────────────────────
+  // GET /api/admin/staff
+  Future<List<StaffMember>> getStaff() async {
+    try {
+      final response = await _dio.get('/admin/staff');
+      final list = (_parseResponse(response.data)['data'] as List?) ?? const [];
+      return list
+          .map((e) => StaffMember.fromJson((e as Map).cast<String, dynamic>()))
+          .toList();
+    } on DioException catch (e) {
+      throw AdminException(_mapDioError(e));
+    }
+  }
+
+  // POST /api/admin/staff
+  Future<StaffMember> createStaff({
+    required String fullName,
+    required String email,
+    required String phone,
+    required String password,
+    required String role, // accountant
+  }) async {
+    try {
+      final response = await _dio.post('/admin/staff', data: {
+        'full_name': fullName,
+        'email': email,
+        'phone': phone,
+        'password': password,
+        'role': role,
+      });
+      final data = _parseResponse(response.data)['data'] as Map;
+      return StaffMember.fromJson(data.cast<String, dynamic>());
+    } on DioException catch (e) {
+      throw AdminException(_mapDioError(e));
+    }
+  }
+
+  // PATCH /api/admin/staff/{id}
+  Future<StaffMember> updateStaff(
+      int id, {
+        String? fullName,
+        String? role,
+        bool? isActive,
+        String? password,
+      }) async {
+    try {
+      final response = await _dio.patch('/admin/staff/$id', data: {
+        if (fullName != null) 'full_name': fullName,
+        if (role != null) 'role': role,
+        if (isActive != null) 'is_active': isActive,
+        if (password != null && password.isNotEmpty) 'password': password,
+      });
+      final data = _parseResponse(response.data)['data'] as Map;
+      return StaffMember.fromJson(data.cast<String, dynamic>());
+    } on DioException catch (e) {
+      throw AdminException(_mapDioError(e));
+    }
+  }
+
   String _mapDioError(DioException e) {
     if (e.type == DioExceptionType.connectionTimeout ||
         e.type == DioExceptionType.connectionError ||
@@ -248,7 +339,8 @@ class AdminRepository {
     final status = e.response?.statusCode;
     final rawData = _parseResponse(e.response?.data);
     final serverMessage = rawData['message'];
-    if (status == 401) return 'غير مصرح لك بهذه العملية';
+    if (status == 401) return 'انتهت الجلسة أو لا تملك صلاحية، سجّل الدخول من جديد';
+    if (status == 403) return serverMessage?.toString() ?? 'ليست لديك صلاحية لهذه العملية';
     if (status == 400) return serverMessage?.toString() ?? 'الرصيد غير كافٍ أو بيانات غير صحيحة';
     if (status != null && status >= 500) return 'خطأ في الخادم، يرجى المحاولة لاحقاً';
     return serverMessage?.toString() ?? 'خطأ في الخادم، يرجى المحاولة لاحقاً';

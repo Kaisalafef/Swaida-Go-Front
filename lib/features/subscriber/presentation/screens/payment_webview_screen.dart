@@ -1,4 +1,11 @@
 // lib/features/subscriber/presentation/screens/payment_webview_screen.dart
+//
+// تغييرات هذه النسخة (الدفعة 1):
+//   • خطأ تحميل صفحة الدفع → لوحة «تعذّر التحميل» مع إعادة المحاولة
+//     (كان onWebResourceError فارغاً فتبقى صفحة بيضاء بلا مخرج).
+//   • التحقق من الدفع: 4 محاولات متدرجة بدل محاولة واحدة بعد ثانيتين، وعند
+//     الفشل لوحة تغطي الـ WebView فلا يعود المستخدم لإدخال بطاقته مرة ثانية،
+//     مع «إعادة التحقق» و«العودة للرئيسية».
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -6,6 +13,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/theme/brand_tokens.dart';
+import '../../../../core/utils/formatters.dart';
+import '../../../../shared/widgets/app_button.dart';
 import '../../data/models/subscriber_models.dart';
 import '../../data/repositories/subscriber_repository.dart';
 
@@ -25,8 +35,23 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
   bool _isVerifying = false;
   bool _isCancelled = false;
 
+  // ── حالات الفشل ───────────────────────────────────────────
+  bool _loadFailed = false; // تعذّر تحميل صفحة الدفع نفسها
+  bool _verifyFailed = false; // لم نستطع تأكيد الدفع بعد كل المحاولات
+  String? _verifyError; // آخر رسالة خطأ شبكة (إن وُجدت)
+  int _verifyAttempt = 0;
+  String _pendingSessionId = '';
+
   static const String _successUrlPattern = '/payment/success';
   static const String _cancelUrlPattern  = '/payment/cancel';
+
+  /// الانتظار قبل كل محاولة تحقق (يمنح الـ Webhook وقتاً ليسجّل الدفع).
+  static const List<Duration> _verifyDelays = [
+    Duration(seconds: 2),
+    Duration(seconds: 3),
+    Duration(seconds: 4),
+    Duration(seconds: 5),
+  ];
 
   // ── نكتشف إن كان الـ URL هو Mock (محلي) أم Paddle حقيقي ──
   bool get _isMockCheckout =>
@@ -50,8 +75,16 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
           onPageFinished: (_) {
             if (mounted) setState(() => _isLoading = false);
           },
-          onWebResourceError: (_) {
-            // لا نفعل شيئاً — نتركه للـ onNavigationRequest
+          onWebResourceError: (WebResourceError error) {
+            // أخطاء الموارد الفرعية (صور/تتبّع) لا تعني فشل الصفحة.
+            // (isForMainFrame يتطلب webview_flutter 4.2+؛ احذف السطر إن لم يُعرَّف.)
+            if (error.isForMainFrame == false) return;
+            if (mounted) {
+              setState(() {
+                _loadFailed = true;
+                _isLoading = false;
+              });
+            }
           },
           onNavigationRequest: (NavigationRequest request) {
             if (_isCancelled) return NavigationDecision.prevent;
@@ -88,33 +121,58 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
       ..loadRequest(Uri.parse(widget.session.checkoutUrl));
   }
 
+  void _retryLoad() {
+    setState(() {
+      _loadFailed = false;
+      _isLoading = true;
+    });
+    _webController.loadRequest(Uri.parse(widget.session.checkoutUrl));
+  }
+
+  // ── التحقق من الدفع ───────────────────────────────────────
   Future<void> _handlePaymentSuccess(String url) async {
     if (_isVerifying || _isCancelled) return;
-    if (mounted) setState(() => _isVerifying = true);
+    _pendingSessionId = Uri.tryParse(url)?.queryParameters['session_id'] ?? '';
+    await _verifyWithRetries();
+  }
 
-    // ✅ انتظر ثانيتين حتى يصل Webhook ويسجل الدفع
-    await Future.delayed(const Duration(seconds: 2));
+  /// يحاول التحقق عدة مرات (الـ Webhook قد يتأخر). عند النجاح → /confirmation،
+  /// وعند استنفاد المحاولات تظهر لوحة الفشل بدل إعادة المستخدم لصفحة الدفع.
+  Future<void> _verifyWithRetries() async {
+    if (!mounted) return;
+    setState(() {
+      _isVerifying = true;
+      _verifyFailed = false;
+      _verifyError = null;
+      _verifyAttempt = 0;
+    });
 
-    try {
-      final uri = Uri.tryParse(url);
-      final sessionId = uri?.queryParameters['session_id'] ?? '';
-
-      final verified = await _repo.verifyPayment(sessionId: sessionId);
+    Object? lastError;
+    for (var i = 0; i < _verifyDelays.length; i++) {
+      await Future<void>.delayed(_verifyDelays[i]);
       if (!mounted || _isCancelled) return;
+      setState(() => _verifyAttempt = i + 1);
 
-      if (verified) {
-        context.go('/confirmation', extra: widget.session);
-      } else {
-        // ✅ الدفع فشل أو لم يُسجَّل بعد
-        _showError('لم يتم تأكيد الدفع. يرجى التحقق أو التواصل مع الدعم.');
-        if (mounted) setState(() => _isVerifying = false);
-      }
-    } catch (e) {
-      if (mounted) {
-        _showError(e.toString());
-        setState(() => _isVerifying = false);
+      try {
+        final verified =
+        await _repo.verifyPayment(sessionId: _pendingSessionId);
+        if (!mounted || _isCancelled) return;
+        if (verified) {
+          context.go('/confirmation', extra: widget.session);
+          return;
+        }
+        lastError = null;
+      } catch (e) {
+        lastError = e;
       }
     }
+
+    if (!mounted) return;
+    setState(() {
+      _isVerifying = false;
+      _verifyFailed = true;
+      _verifyError = lastError?.toString();
+    });
   }
 
   void _handlePaymentCancel() {
@@ -122,19 +180,19 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
     if (mounted) context.go('/home');
   }
 
-  void _showError(String message) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(message, style: GoogleFonts.cairo()),
-      backgroundColor: AppColors.error,
-      behavior: SnackBarBehavior.floating,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      margin: const EdgeInsets.all(16),
-    ));
+  void _goHome() {
+    _isCancelled = true;
+    if (mounted) context.go('/home');
   }
 
   Future<bool> _onWillPop() async {
     if (_isVerifying) return false;
+
+    // لوحات الفشل: لا حاجة لتأكيد، الرجوع يعني العودة للرئيسية.
+    if (_verifyFailed || _loadFailed) {
+      _isCancelled = true;
+      return true;
+    }
 
     final confirm = await showDialog<bool>(
       context: context,
@@ -221,7 +279,7 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
                   ),
                 ),
                 Text(
-                  '\$${widget.session.totalAmount.toStringAsFixed(2)} — ${widget.session.months.length} ${widget.session.months.length == 1 ? "شهر" : "أشهر"}',
+                  '${Fmt.money2(widget.session.totalAmount)} — ${Fmt.months(widget.session.months.length)}',
                   style: GoogleFonts.cairo(
                     fontSize: 11,
                     color: AppColors.white.withOpacity(0.8),
@@ -273,8 +331,10 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            'يرجى الانتظار لحظة',
-                            style: GoogleFonts.cairo(fontSize: 13, color: AppColors.textMuted),
+                            _verifyAttempt > 1
+                                ? 'المحاولة $_verifyAttempt من ${_verifyDelays.length}'
+                                : 'يرجى الانتظار لحظة',
+                            style: GoogleFonts.cairo(fontSize: 13, color: Brand.bodyOnLight),
                           ),
                         ],
                       ),
@@ -306,6 +366,42 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
                     ),
                   ),
                 ),
+
+              // ── تعذّر تحميل صفحة الدفع ──────────────────────
+              if (_loadFailed && !_isVerifying && !_verifyFailed)
+                Positioned.fill(
+                  child: _StatusPanel(
+                    icon: Icons.wifi_off_rounded,
+                    color: AppColors.error,
+                    soft: AppColors.errorLight,
+                    title: 'تعذّر تحميل صفحة الدفع',
+                    message:
+                    'تحقق من اتصالك بالإنترنت ثم أعد المحاولة. لم يُخصم أي مبلغ.',
+                    primaryLabel: 'إعادة المحاولة',
+                    onPrimary: _retryLoad,
+                    secondaryLabel: 'العودة للرئيسية',
+                    onSecondary: _goHome,
+                  ),
+                ),
+
+              // ── لم نستطع تأكيد الدفع (تغطي الـ WebView كلياً) ──
+              if (_verifyFailed && !_isVerifying)
+                Positioned.fill(
+                  child: _StatusPanel(
+                    icon: Icons.schedule_rounded,
+                    color: AppColors.primary,
+                    soft: AppColors.primarySoft,
+                    title: 'لم نتمكّن من تأكيد الدفع بعد',
+                    message:
+                    'إن كان المبلغ قد خُصم من بطاقتك فلا تُعد الدفع: سيظهر في اشتراكك تلقائياً خلال دقائق. '
+                        'يمكنك إعادة التحقق الآن أو العودة للرئيسية.'
+                        '${_verifyError != null ? '\n\n$_verifyError' : ''}',
+                    primaryLabel: 'إعادة التحقق',
+                    onPrimary: _verifyWithRetries,
+                    secondaryLabel: 'العودة للرئيسية',
+                    onSecondary: _goHome,
+                  ),
+                ),
             ],
           ),
           bottomNavigationBar: Container(
@@ -325,6 +421,89 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
                       ? 'وضع الاختبار — لا تُدخل بيانات حقيقية'
                       : 'اتصال آمن ومشفر — بيانات بطاقتك محمية',
                   style: GoogleFonts.cairo(fontSize: 11, color: AppColors.textMuted),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+//  لوحة حالة بملء الشاشة (خطأ تحميل / فشل تأكيد)
+// ─────────────────────────────────────────────────────────
+class _StatusPanel extends StatelessWidget {
+  const _StatusPanel({
+    required this.icon,
+    required this.color,
+    required this.soft,
+    required this.title,
+    required this.message,
+    required this.primaryLabel,
+    required this.onPrimary,
+    required this.secondaryLabel,
+    required this.onSecondary,
+  });
+
+  final IconData icon;
+  final Color color;
+  final Color soft;
+  final String title;
+  final String message;
+  final String primaryLabel;
+  final VoidCallback onPrimary;
+  final String secondaryLabel;
+  final VoidCallback onSecondary;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: AppColors.secondary,
+      child: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(color: soft, shape: BoxShape.circle),
+                    child: Icon(icon, color: color, size: 36),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.cairo(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                    color: AppColors.accent,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.cairo(
+                    fontSize: 13.5,
+                    height: 1.7,
+                    color: Brand.bodyOnLight,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                AppButton(label: primaryLabel, onPressed: onPrimary),
+                const SizedBox(height: 12),
+                AppButton(
+                  label: secondaryLabel,
+                  onPressed: onSecondary,
+                  outlined: true,
                 ),
               ],
             ),

@@ -7,11 +7,11 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:swida_go/features/admin/presentation/screens/widgets/admin_ui.dart';
 
 import '../../../../core/constants/app_colors.dart';
-import '../../data/models/admin_models.dart';
 import '../../data/repositories/admin_repository.dart';
+
 
 // ══════════════════════════════════════════════════════════════
 // MODELS  (مؤقتة داخل الملف — يمكن نقلها إلى admin_models.dart)
@@ -76,7 +76,7 @@ class AdminHistoricalPaymentsScreen extends StatefulWidget {
 
 class _AdminHistoricalPaymentsScreenState
     extends State<AdminHistoricalPaymentsScreen>
-    with TickerProviderStateMixin {
+    with SingleTickerProviderStateMixin {
   final _repo = AdminRepository();
 
   // ── State ─────────────────────────────────────────────────
@@ -129,7 +129,9 @@ class _AdminHistoricalPaymentsScreenState
   @override
   void dispose() {
     _fadeCtrl.dispose();
+    _searchCtrl.removeListener(_onSearch);
     _searchCtrl.dispose();
+    _amountController.dispose();
     _noteCtrl.dispose();
     super.dispose();
   }
@@ -305,83 +307,19 @@ class _AdminHistoricalPaymentsScreenState
       if (mounted) setState(() => _saving = false);
     }
   }
+
   // ── UI Helpers ────────────────────────────────────────────
   void _showError(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg, style: GoogleFonts.cairo()),
-      backgroundColor: AppColors.error,
-      behavior: SnackBarBehavior.floating,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      margin: const EdgeInsets.all(16),
-    ));
+    showAdminSnack(context, msg);
   }
 
   void _showSuccessDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 72, height: 72,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF1B6B44), AppColors.primary],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.primary.withOpacity(0.35),
-                      blurRadius: 18, offset: const Offset(0, 6),
-                    )
-                  ],
-                ),
-                child: const Icon(Icons.check_rounded,
-                    color: Colors.white, size: 38),
-              ),
-              const SizedBox(height: 20),
-              Text('تم الحفظ بنجاح',
-                  style: GoogleFonts.cairo(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.accent)),
-              const SizedBox(height: 8),
-              Text(
-                'تم تسجيل المدفوعات التاريخية\nوتحديث رصيد صندوق التطبيق.',
-                style: GoogleFonts.cairo(
-                    fontSize: 13, color: AppColors.textMuted, height: 1.6),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 22),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.of(ctx).pop(),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                    elevation: 0,
-                  ),
-                  child: Text('حسناً',
-                      style: GoogleFonts.cairo(
-                          fontWeight: FontWeight.bold, fontSize: 15)),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+    showAdminSuccessDialog(
+      context,
+      title: 'تم الحفظ بنجاح',
+      message: 'تم تسجيل المدفوعات التاريخية\nوتحديث رصيد صندوق التطبيق.',
+      buttonLabel: 'حسناً',
     );
   }
 
@@ -391,14 +329,23 @@ class _AdminHistoricalPaymentsScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF0F4F2),
+      backgroundColor: AdminTokens.bg,
       body: Column(
         children: [
           _buildHeader(),
           Expanded(
-            child: _selected == null
-                ? _buildSubscriberPicker()
-                : _buildPaymentEditor(),
+            child: AnimatedSwitcher(
+              duration: AdminTokens.base,
+              child: _selected == null
+                  ? KeyedSubtree(
+                key: const ValueKey('picker'),
+                child: _buildSubscriberPicker(),
+              )
+                  : KeyedSubtree(
+                key: const ValueKey('editor'),
+                child: _buildPaymentEditor(),
+              ),
+            ),
           ),
         ],
       ),
@@ -407,90 +354,24 @@ class _AdminHistoricalPaymentsScreenState
 
   // ── Header ────────────────────────────────────────────────
   Widget _buildHeader() {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF1B6B44), AppColors.primary, Color(0xFF2ECC8B)],
-          begin: Alignment.topRight,
-          end: Alignment.bottomLeft,
-        ),
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(8, 4, 20, 14),
-          child: Row(
-            children: [
-              IconButton(
-                icon: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.18),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.white.withOpacity(0.1)),
-                  ),
-                  child: const Icon(Icons.arrow_back_ios_rounded,
-                      color: Colors.white, size: 16),
-                ),
-                onPressed: () {
-                  if (_selected != null) {
-                    setState(() {
-                      _selected = null;
-                      _serverMonths.clear();
-                      _selections.clear();
-                    });
-                  } else {
-                    context.go('/admin/dashboard');
-                  }
-                },
-              ),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      _selected == null
-                          ? 'تسجيل مدفوعات سابقة'
-                          : _selected!.fullName,
-                      style: GoogleFonts.cairo(
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                        fontSize: 17,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    if (_selected != null)
-                      Text(
-                        _selected!.phone,
-                        style: GoogleFonts.cairo(
-                            fontSize: 12,
-                            color: Colors.white.withOpacity(0.8)),
-                      ),
-                  ],
-                ),
-              ),
-              if (_selected != null)
-                Container(
-                  padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    '\$${_selected!.annualAmount.toStringAsFixed(0)}/سنة',
-                    style: GoogleFonts.cairo(
-                        fontSize: 12,
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
+    return AdminHeaderBar(
+      title: _selected == null ? 'تسجيل مدفوعات سابقة' : _selected!.fullName,
+      subtitle: _selected?.phone,
+      trailing: _selected == null
+          ? null
+          : AdminHeaderBadge(
+          '${AdminFmt.money(_selected!.annualAmount)} / سنة'),
+      onBack: () {
+        if (_selected != null) {
+          setState(() {
+            _selected = null;
+            _serverMonths.clear();
+            _selections.clear();
+          });
+        } else {
+          context.go('/admin/dashboard');
+        }
+      },
     );
   }
 
@@ -502,23 +383,18 @@ class _AdminHistoricalPaymentsScreenState
       children: [
         // ── Info Banner ──────────────────────────────────
         Container(
-          margin: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+          margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                const Color(0xFF1B6B44).withOpacity(0.08),
-                AppColors.primary.withOpacity(0.06),
-              ],
-            ),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-                color: AppColors.primary.withOpacity(0.2), width: 1),
+            color: AppColors.primary.withOpacity(0.07),
+            borderRadius: BorderRadius.circular(AdminTokens.rMd),
+            border: Border.all(color: AppColors.primary.withOpacity(0.2)),
           ),
           child: Row(
             children: [
               Container(
-                width: 38, height: 38,
+                width: 40,
+                height: 40,
                 decoration: BoxDecoration(
                   color: AppColors.primary.withOpacity(0.12),
                   shape: BoxShape.circle,
@@ -530,10 +406,7 @@ class _AdminHistoricalPaymentsScreenState
               Expanded(
                 child: Text(
                   'اختر مشتركاً لتسجيل دفعاته السابقة قبل إطلاق التطبيق.',
-                  style: GoogleFonts.cairo(
-                      fontSize: 13,
-                      color: AppColors.accent,
-                      height: 1.5),
+                  style: AdminText.body.copyWith(color: AppColors.accent),
                 ),
               ),
             ],
@@ -542,59 +415,48 @@ class _AdminHistoricalPaymentsScreenState
 
         // ── Search ───────────────────────────────────────
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
           child: TextField(
             controller: _searchCtrl,
-            decoration: InputDecoration(
-              hintText: 'بحث بالاسم أو رقم الهاتف…',
-              hintStyle:
-              GoogleFonts.cairo(fontSize: 13, color: AppColors.textMuted),
-              prefixIcon: const Icon(Icons.search_rounded,
-                  color: AppColors.primary, size: 20),
-              filled: true,
+            textInputAction: TextInputAction.search,
+            style: AdminText.body,
+            decoration: adminInputDecoration(
+              hint: 'بحث بالاسم أو رقم الهاتف…',
+              prefixIcon: Icons.search_rounded,
               fillColor: Colors.white,
-              contentPadding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
-              border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: BorderSide.none),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide:
-                BorderSide(color: AppColors.border.withOpacity(0.5)),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide:
-                const BorderSide(color: AppColors.primary, width: 1.5),
+              suffixIcon: _searchCtrl.text.isEmpty
+                  ? null
+                  : IconButton(
+                tooltip: 'مسح البحث',
+                icon: const Icon(Icons.close_rounded, size: 20),
+                color: AppColors.textMuted,
+                onPressed: _searchCtrl.clear,
               ),
             ),
-            style: GoogleFonts.cairo(fontSize: 14),
           ),
         ),
-
-        const SizedBox(height: 10),
 
         // ── List ─────────────────────────────────────────
         Expanded(
           child: _loadingSubscribers
-              ? const Center(
-              child:
-              CircularProgressIndicator(color: AppColors.primary))
+              ? const _PickerSkeleton()
               : _filtered.isEmpty
-              ? Center(
-            child: Text('لا توجد نتائج',
-                style: GoogleFonts.cairo(
-                    color: AppColors.textMuted, fontSize: 14)),
+              ? const AdminEmptyState(
+            icon: Icons.search_off_rounded,
+            title: 'لا توجد نتائج',
+            message: 'جرّب البحث باسم أو رقم هاتف آخر',
           )
               : ListView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            keyboardDismissBehavior:
+            ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: EdgeInsets.fromLTRB(
+                16, 8, 16, 16 + MediaQuery.of(context).padding.bottom),
             itemCount: _filtered.length,
-            itemBuilder: (ctx, i) =>
-                _SubscriberTile(
-                  subscriber: _filtered[i],
-                  onTap: () => _selectSubscriber(_filtered[i]),
-                ),
+            itemBuilder: (ctx, i) => _SubscriberTile(
+              key: ValueKey(_filtered[i].id),
+              subscriber: _filtered[i],
+              onTap: () => _selectSubscriber(_filtered[i]),
+            ),
           ),
         ),
       ],
@@ -623,14 +485,19 @@ class _AdminHistoricalPaymentsScreenState
           // ── Months Grid ───────────────────────────────
           Expanded(
             child: _loadingMonths
-                ? const Center(
-                child: CircularProgressIndicator(
-                    color: AppColors.primary))
+                ? const _MonthsSkeleton()
                 : _buildMonthsSection(),
           ),
 
           // ── Bottom Panel ──────────────────────────────
-          if (_totalSelectedMonths > 0) _buildSavePanel(),
+          AnimatedSize(
+            duration: AdminTokens.base,
+            curve: AdminTokens.curve,
+            alignment: Alignment.bottomCenter,
+            child: _totalSelectedMonths > 0
+                ? _buildSavePanel()
+                : const SizedBox(width: double.infinity),
+          ),
         ],
       ),
     );
@@ -641,7 +508,7 @@ class _AdminHistoricalPaymentsScreenState
     if (months == null) {
       return Center(
         child: Text('اضغط على السنة لتحميل البيانات',
-            style: GoogleFonts.cairo(color: AppColors.textMuted)),
+            style: AdminText.bodyMuted),
       );
     }
 
@@ -650,103 +517,104 @@ class _AdminHistoricalPaymentsScreenState
     final canSelectAll = months.any((m) => m.status != 'paid');
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Row: status chips + select all
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              _StatusChip(
-                  label: 'مدفوع', count: alreadyPaid, color: AppColors.success),
-              const SizedBox(width: 8),
-              _StatusChip(
-                label: 'محدد',
-                count: yearSelected.length,
-                color: const Color(0xFF1A73E8),
+              AdminPill(
+                label: 'مدفوع: $alreadyPaid',
+                color: AppColors.success,
+                icon: Icons.check_circle_rounded,
               ),
-              const Spacer(),
+              AdminPill(
+                label: 'محدد: ${yearSelected.length}',
+                color: AdminTokens.select,
+                icon: Icons.radio_button_checked_rounded,
+              ),
               if (canSelectAll)
                 _SmallButton(
                   label: 'تحديد الكل',
                   icon: Icons.select_all_rounded,
                   onTap: () => _selectAllForYear(_activeYear),
                 ),
-              if (yearSelected.isNotEmpty) ...[
-                const SizedBox(width: 6),
+              if (yearSelected.isNotEmpty)
                 _SmallButton(
                   label: 'إلغاء',
                   icon: Icons.deselect_rounded,
                   color: AppColors.error,
                   onTap: () => _clearYearSelection(_activeYear),
                 ),
-              ],
             ],
           ),
           const SizedBox(height: 14),
 
-          // Months Grid (4 × 3)
-          GridView.count(
-            crossAxisCount: 3,
+          // Months Grid (3 × 4) – fixed row height, no aspect-ratio overflow
+          GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 10,
-            crossAxisSpacing: 10,
-            childAspectRatio: 1.6,
-            children: months.map((m) {
-              final isSelected = yearSelected.contains(m.monthNumber);
+            itemCount: months.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              mainAxisSpacing: 10,
+              crossAxisSpacing: 10,
+              mainAxisExtent: 68,
+            ),
+            itemBuilder: (ctx, i) {
+              final m = months[i];
               return _MonthCell(
                 monthName: _arabicMonths[m.monthNumber - 1],
                 status: m.status,
-                isSelected: isSelected,
+                isSelected: yearSelected.contains(m.monthNumber),
                 onTap: () =>
                     _toggleMonth(_activeYear, m.monthNumber, m.status),
               );
-            }).toList(),
+            },
           ),
 
-          const SizedBox(height: 16),
-          // داخل الـ build أو مكان عرض المدخلات
-          TextField(
-            controller: _amountController,
-            keyboardType: TextInputType.number,
-            decoration: InputDecoration(
-              labelText: 'المبلغ الشهري لهذا السجل (اختياري)',
-              hintText: 'مثلاً: 12.5',
-              prefixIcon: Icon(Icons.money),
-              border: OutlineInputBorder(),
+          const SizedBox(height: 20),
+          AdminCard(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const AdminSectionTitle(
+                  title: 'تفاصيل إضافية',
+                  icon: Icons.tune_rounded,
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _amountController,
+                  keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+                  textInputAction: TextInputAction.next,
+                  style: AdminText.body,
+                  decoration: adminInputDecoration(
+                    label: 'المبلغ الشهري لهذا السجل (اختياري)',
+                    hint: 'مثلاً: 12.5',
+                    prefixIcon: Icons.payments_outlined,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: _noteCtrl,
+                  maxLines: 2,
+                  style: AdminText.body,
+                  decoration: adminInputDecoration(
+                    label: 'ملاحظة (اختياري)',
+                    hint: 'مثال: مشترك قبل إطلاق التطبيق',
+                    prefixIcon: Icons.notes_rounded,
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 16),
-          // Note field
-          TextField(
-            controller: _noteCtrl,
-            maxLines: 2,
-            decoration: InputDecoration(
-              hintText: 'ملاحظة (اختياري) — مثال: مشترك قبل إطلاق التطبيق',
-              hintStyle:
-              GoogleFonts.cairo(fontSize: 12, color: AppColors.textMuted),
-              filled: true,
-              fillColor: Colors.white,
-              contentPadding:
-              const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide:
-                BorderSide(color: AppColors.border.withOpacity(0.5)),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide:
-                const BorderSide(color: AppColors.primary, width: 1.5),
-              ),
-            ),
-            style: GoogleFonts.cairo(fontSize: 13),
-          ),
-          const SizedBox(height: 8),
         ],
       ),
     );
@@ -754,63 +622,47 @@ class _AdminHistoricalPaymentsScreenState
 
   Widget _buildSavePanel() {
     return Container(
-      decoration: BoxDecoration(
+      decoration: const BoxDecoration(
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.07),
+            color: Color(0x14000000),
             blurRadius: 16,
-            offset: const Offset(0, -4),
-          )
+            offset: Offset(0, -4),
+          ),
         ],
-        borderRadius:
-        const BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+      padding: EdgeInsets.fromLTRB(
+          20, 16, 20, 16 + MediaQuery.of(context).padding.bottom),
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
               _SummaryBadge(
-                  label: 'أشهر محددة',
-                  value: '$_totalSelectedMonths',
-                  icon: Icons.calendar_month_rounded,
-                  color: const Color(0xFF1A73E8)),
-              const SizedBox(width: 16),
+                label: 'أشهر محددة',
+                value: '$_totalSelectedMonths',
+                icon: Icons.calendar_month_rounded,
+                color: AdminTokens.select,
+              ),
+              const SizedBox(width: 12),
               _SummaryBadge(
-                  label: 'المبلغ الإجمالي',
-                  value: '\$${_totalAmount.toStringAsFixed(2)}',
-                  icon: Icons.attach_money_rounded,
-                  color: AppColors.primary),
+                label: 'المبلغ الإجمالي',
+                value: AdminFmt.money(_totalAmount, decimals: 2),
+                icon: Icons.attach_money_rounded,
+                color: AppColors.primary,
+              ),
             ],
           ),
           const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
+          AdminButton(
+            label: _saving ? 'جارٍ الحفظ…' : 'حفظ المدفوعات المحددة',
+            icon: Icons.save_rounded,
+            loading: _saving,
             height: 52,
-            child: ElevatedButton.icon(
-              icon: _saving
-                  ? const SizedBox(
-                width: 18, height: 18,
-                child: CircularProgressIndicator(
-                    color: Colors.white, strokeWidth: 2),
-              )
-                  : const Icon(Icons.save_rounded, size: 20),
-              label: Text(
-                _saving ? 'جارٍ الحفظ…' : 'حفظ المدفوعات المحددة',
-                style: GoogleFonts.cairo(
-                    fontWeight: FontWeight.bold, fontSize: 15),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
-              ),
-              onPressed: _saving ? null : _save,
-            ),
+            onPressed: _saving ? null : _save,
           ),
         ],
       ),
@@ -822,106 +674,112 @@ class _AdminHistoricalPaymentsScreenState
 // SUB-WIDGETS
 // ══════════════════════════════════════════════════════════════
 
+class _PickerSkeleton extends StatelessWidget {
+  const _PickerSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return AdminPulse(
+      child: ListView.separated(
+        physics: const NeverScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        itemCount: 6,
+        separatorBuilder: (_, __) => const SizedBox(height: 10),
+        itemBuilder: (_, __) =>
+        const AdminSkeleton(height: 72, radius: AdminTokens.rMd),
+      ),
+    );
+  }
+}
+
+class _MonthsSkeleton extends StatelessWidget {
+  const _MonthsSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return AdminPulse(
+      child: GridView.builder(
+        physics: const NeverScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        itemCount: 12,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          mainAxisSpacing: 10,
+          crossAxisSpacing: 10,
+          mainAxisExtent: 68,
+        ),
+        itemBuilder: (_, __) => const AdminSkeleton(radius: AdminTokens.rSm),
+      ),
+    );
+  }
+}
+
 class _SubscriberTile extends StatelessWidget {
-  const _SubscriberTile(
-      {required this.subscriber, required this.onTap});
+  const _SubscriberTile({
+    super.key,
+    required this.subscriber,
+    required this.onTap,
+  });
   final _SubscriberSimple subscriber;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: subscriber.hasSubscription ? onTap : null,
-      child: Container(
-        margin: const EdgeInsets.only(top: 10),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.border.withOpacity(0.4)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.04),
-              blurRadius: 8, offset: const Offset(0, 2),
+    final active = subscriber.hasSubscription;
+
+    return AdminCard(
+      margin: const EdgeInsets.only(top: 10),
+      radius: AdminTokens.rMd,
+      padding: const EdgeInsets.all(14),
+      onTap: active ? onTap : null,
+      splashColor: AppColors.primary,
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              gradient: active
+                  ? AdminTokens.heroGradient
+                  : LinearGradient(
+                  colors: [Colors.grey.shade400, Colors.grey.shade300]),
+              shape: BoxShape.circle,
             ),
-          ],
-        ),
-        child: Row(
-          children: [
-            // Avatar
-            Container(
-              width: 44, height: 44,
-              decoration: BoxDecoration(
-                gradient: subscriber.hasSubscription
-                    ? const LinearGradient(
-                  colors: [Color(0xFF1B6B44), AppColors.primary],
-                  begin: Alignment.topLeft, end: Alignment.bottomRight,
-                )
-                    : LinearGradient(
-                    colors: [Colors.grey.shade300, Colors.grey.shade200]),
-                shape: BoxShape.circle,
-              ),
-              child: Center(
-                child: Text(
-                  subscriber.fullName.isNotEmpty
-                      ? subscriber.fullName[0]
-                      : '?',
-                  style: GoogleFonts.cairo(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 18),
+            child: Text(
+              subscriber.fullName.isNotEmpty ? subscriber.fullName[0] : '?',
+              style: AdminText.title.copyWith(color: Colors.white),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  subscriber.fullName,
+                  style: active
+                      ? AdminText.label
+                      : AdminText.label.copyWith(color: AppColors.textMuted),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-              ),
+                Text(subscriber.phone, style: AdminText.caption),
+              ],
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(subscriber.fullName,
-                      style: GoogleFonts.cairo(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 14,
-                          color: subscriber.hasSubscription
-                              ? AppColors.textDark
-                              : AppColors.textMuted)),
-                  const SizedBox(height: 2),
-                  Text(subscriber.phone,
-                      style: GoogleFonts.cairo(
-                          fontSize: 12, color: AppColors.textMuted)),
-                ],
-              ),
+          ),
+          const SizedBox(width: 8),
+          if (active) ...[
+            Text(
+              '${AdminFmt.money(subscriber.annualAmount)} / سنة',
+              style: AdminText.captionBold.copyWith(color: AppColors.primary),
             ),
-            if (subscriber.hasSubscription) ...[
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    '\$${subscriber.annualAmount.toStringAsFixed(0)}/سنة',
-                    style: GoogleFonts.cairo(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.primary),
-                  ),
-                  const SizedBox(height: 2),
-                  const Icon(Icons.chevron_right_rounded,
-                      color: AppColors.primary, size: 20),
-                ],
-              ),
-            ] else
-              Container(
-                padding:
-                const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text('بدون اشتراك',
-                    style: GoogleFonts.cairo(
-                        fontSize: 10, color: AppColors.textMuted)),
-              ),
-          ],
-        ),
+            const SizedBox(width: 6),
+            const Icon(Icons.arrow_forward_ios_rounded,
+                color: AppColors.textMuted, size: 14),
+          ] else
+            const AdminPill(label: 'بدون اشتراك', color: AppColors.textMuted),
+        ],
       ),
     );
   }
@@ -942,64 +800,64 @@ class _YearTabBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 46,
+      height: 60,
       color: Colors.white,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         itemCount: years.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 6),
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (ctx, i) {
           final y = years[i];
           final active = y == activeYear;
           final count = selectionCount(y);
-          return GestureDetector(
-            onTap: () => onYearSelected(y),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              margin: const EdgeInsets.symmetric(vertical: 8),
-              padding:
-              const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-              decoration: BoxDecoration(
-                color: active ? AppColors.primary : Colors.transparent,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
+
+          return Semantics(
+            button: true,
+            selected: active,
+            label: 'سنة $y',
+            child: Material(
+              color: active ? AppColors.primary : Colors.transparent,
+              clipBehavior: Clip.antiAlias,
+              shape: StadiumBorder(
+                side: BorderSide(
                   color: active
                       ? AppColors.primary
-                      : AppColors.border.withOpacity(0.5),
+                      : AppColors.border.withOpacity(0.8),
                 ),
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    '$y',
-                    style: GoogleFonts.cairo(
-                      fontSize: 13,
-                      fontWeight:
-                      active ? FontWeight.bold : FontWeight.w500,
-                      color: active ? Colors.white : AppColors.textMuted,
-                    ),
-                  ),
-                  if (count > 0) ...[
-                    const SizedBox(width: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 5, vertical: 1),
-                      decoration: BoxDecoration(
-                        color: active
-                            ? Colors.white.withOpacity(0.3)
-                            : const Color(0xFF1A73E8),
-                        borderRadius: BorderRadius.circular(8),
+              child: InkWell(
+                onTap: () => onYearSelected(y),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '$y',
+                        style: AdminText.label.copyWith(
+                          color: active ? Colors.white : AppColors.textMuted,
+                        ),
                       ),
-                      child: Text('$count',
-                          style: GoogleFonts.cairo(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white)),
-                    ),
-                  ],
-                ],
+                      if (count > 0) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: active
+                                ? AdminTokens.onBrand20
+                                : AdminTokens.select,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text('$count',
+                              style: AdminText.captionBold
+                                  .copyWith(color: Colors.white)),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
             ),
           );
@@ -1029,92 +887,83 @@ class _MonthCell extends StatelessWidget {
     Color bg;
     Color border;
     Color textColor;
-    Widget? icon;
+    IconData? icon;
+    Color iconColor = AppColors.textMuted;
+    String stateLabel;
 
     if (isPaid) {
-      bg = const Color(0xFFB9F6CA);
-      border = const Color(0xFF66BB6A);
-      textColor = const Color(0xFF1B5E20);
-      icon = const Icon(Icons.check_circle_rounded,
-          size: 14, color: Color(0xFF2E7D32));
+      bg = AdminTokens.paidBg;
+      border = AdminTokens.paidBorder;
+      textColor = AdminTokens.paidFg;
+      icon = Icons.check_circle_rounded;
+      iconColor = AdminTokens.green;
+      stateLabel = 'مدفوع';
     } else if (isSelected) {
-      bg = const Color(0xFFE3F0FF);
-      border = const Color(0xFF1A73E8);
+      bg = AdminTokens.selectSoft;
+      border = AdminTokens.select;
       textColor = const Color(0xFF1A56A8);
-      icon = const Icon(Icons.radio_button_checked_rounded,
-          size: 14, color: Color(0xFF1A73E8));
+      icon = Icons.radio_button_checked_rounded;
+      iconColor = AdminTokens.select;
+      stateLabel = 'محدد';
     } else if (isOverdue) {
-      bg = const Color(0xFFFFEBEE);
-      border = const Color(0xFFEF9A9A);
+      bg = AdminTokens.overdueBg;
+      border = AdminTokens.overdueBorder;
       textColor = AppColors.error;
-      icon = const Icon(Icons.warning_amber_rounded,
-          size: 13, color: AppColors.error);
+      icon = Icons.warning_amber_rounded;
+      iconColor = AppColors.error;
+      stateLabel = 'متأخر';
     } else {
-      bg = const Color(0xFFF5F5F5);
+      bg = AdminTokens.pendingBg;
       border = AppColors.border;
       textColor = AppColors.textMuted;
       icon = null;
+      stateLabel = 'غير مدفوع';
     }
 
-    return GestureDetector(
-      onTap: onTap,
+    return Semantics(
+      button: !isPaid,
+      selected: isSelected,
+      enabled: !isPaid,
+      label: '$monthName، $stateLabel',
+      excludeSemantics: true,
+      onTap: isPaid ? null : onTap,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
+        duration: AdminTokens.fast,
+        curve: AdminTokens.curve,
         decoration: BoxDecoration(
           color: bg,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: border,
-            width: isSelected ? 1.8 : 1.0,
+          borderRadius: BorderRadius.circular(AdminTokens.rSm),
+          border: Border.all(color: border, width: isSelected ? 1.8 : 1.0),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(AdminTokens.rSm),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: isPaid ? null : onTap,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (icon != null) ...[
+                  Icon(icon, size: 16, color: iconColor),
+                  const SizedBox(height: 3),
+                ],
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    monthName,
+                    style: AdminText.body.copyWith(
+                      fontWeight: isSelected || isPaid
+                          ? FontWeight.w700
+                          : FontWeight.w500,
+                      color: textColor,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
-          boxShadow: isSelected
-              ? [
-            BoxShadow(
-              color: const Color(0xFF1A73E8).withOpacity(0.18),
-              blurRadius: 8, offset: const Offset(0, 2),
-            )
-          ]
-              : [],
         ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (icon != null) ...[icon, const SizedBox(height: 3)],
-            Text(monthName,
-                style: GoogleFonts.cairo(
-                    fontSize: 12,
-                    fontWeight:
-                    isSelected || isPaid ? FontWeight.bold : FontWeight.w500,
-                    color: textColor)),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _StatusChip extends StatelessWidget {
-  const _StatusChip(
-      {required this.label, required this.count, required this.color});
-  final String label;
-  final int count;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Text(
-        '$label: $count',
-        style: GoogleFonts.cairo(
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
-            color: color),
       ),
     );
   }
@@ -1134,26 +983,29 @@ class _SmallButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: color.withOpacity(0.3)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 13, color: color),
-            const SizedBox(width: 4),
-            Text(label,
-                style: GoogleFonts.cairo(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: color)),
-          ],
+    return Material(
+      color: color.withOpacity(0.10),
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: BorderSide(color: color.withOpacity(0.3)),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 40),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 16, color: color),
+                const SizedBox(width: 6),
+                Text(label,
+                    style: AdminText.captionBold.copyWith(color: color)),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -1179,25 +1031,27 @@ class _SummaryBadge extends StatelessWidget {
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: color.withOpacity(0.07),
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(AdminTokens.rSm),
           border: Border.all(color: color.withOpacity(0.2)),
         ),
         child: Row(
           children: [
-            Icon(icon, size: 18, color: color),
+            Icon(icon, size: 20, color: color),
             const SizedBox(width: 8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label,
-                    style: GoogleFonts.cairo(
-                        fontSize: 10, color: AppColors.textMuted)),
-                Text(value,
-                    style: GoogleFonts.cairo(
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                        color: color)),
-              ],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: AdminText.caption),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Text(value,
+                        style: AdminText.label
+                            .copyWith(fontSize: 16, color: color)),
+                  ),
+                ],
+              ),
             ),
           ],
         ),

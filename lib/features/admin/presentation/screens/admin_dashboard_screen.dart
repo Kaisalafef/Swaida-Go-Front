@@ -3,11 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:swida_go/features/admin/presentation/screens/widgets/admin_ui.dart';
+import 'package:swida_go/core/auth/staff_role.dart';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/repositories/admin_repository.dart';
+
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -26,6 +28,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
   DashboardStats? _stats;
   CommissionSetting? _commission;
   bool _isLoading = true;
+  String? _role; // admin | accountant
 
   late AnimationController _animController;
   late Animation<double> _fadeAnim;
@@ -36,16 +39,25 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
     super.initState();
     _animController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 700),
+      duration: const Duration(milliseconds: 600),
     );
     _fadeAnim =
         CurvedAnimation(parent: _animController, curve: Curves.easeOut);
     _slideAnim = Tween<Offset>(
-      begin: const Offset(0, 0.08),
+      begin: const Offset(0, 0.04),
       end: Offset.zero,
     ).animate(
         CurvedAnimation(parent: _animController, curve: Curves.easeOutCubic));
+    // Entrance animation plays once when the screen opens, so the quick-access
+    // links are always reachable even if the API call fails.
+    _animController.forward();
+    _loadRole();
     _loadData();
+  }
+
+  Future<void> _loadRole() async {
+    final role = await _storage.read(key: 'user_role');
+    if (mounted) setState(() => _role = role);
   }
 
   @override
@@ -66,19 +78,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
           _stats = results[0] as DashboardStats;
           _commission = results[1] as CommissionSetting;
         });
-        _animController.forward(from: 0);
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(e.toString(), style: GoogleFonts.cairo()),
-          backgroundColor: AppColors.error,
-          behavior: SnackBarBehavior.floating,
-          shape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          margin: const EdgeInsets.all(16),
-        ));
-      }
+      if (mounted) showAdminSnack(context, e.toString());
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -89,81 +91,80 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
     if (mounted) context.go('/login');
   }
 
+  Future<void> _confirmLogout() async {
+    final ok = await showAdminConfirmDialog(
+      context,
+      title: 'تسجيل الخروج',
+      message: 'هل تريد تسجيل الخروج من لوحة الإدارة؟',
+      confirmLabel: 'تسجيل الخروج',
+    );
+    if (ok) await _logout();
+  }
+
   // ── فتح BottomSheet لتعديل العمولة ────────────────────────
   void _showEditCommissionSheet() {
-    final controller = TextEditingController(
-      text: _commission != null
-          ? _commission!.value.toStringAsFixed(2)
-          : '',
-    );
-
-    showModalBottomSheet(
+    if (!StaffRole.canEditCommission(_role)) return;
+    showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => _CommissionEditSheet(
-        controller: controller,
         currentValue: _commission?.value,
         onSave: (newValue) async {
           try {
             final updated = await _repo.updateCommission(newValue);
             if (mounted) {
               setState(() => _commission = updated);
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: Text('✓ تم تحديث العمولة إلى ${newValue.toStringAsFixed(2)}%',
-                    style: GoogleFonts.cairo()),
-                backgroundColor: AppColors.primary,
-                behavior: SnackBarBehavior.floating,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
-                margin: const EdgeInsets.all(16),
-              ));
+              showAdminSnack(
+                context,
+                'تم تحديث العمولة إلى ${newValue.toStringAsFixed(2)}%',
+                error: false,
+              );
             }
           } catch (e) {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: Text(e.toString(), style: GoogleFonts.cairo()),
-                backgroundColor: AppColors.error,
-                behavior: SnackBarBehavior.floating,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
-                margin: const EdgeInsets.all(16),
-              ));
-            }
+            if (mounted) showAdminSnack(context, e.toString());
           }
         },
       ),
     );
   }
 
+  // ═════════════════════════════════════════════════════════
+  // BUILD
+  // ═════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF0F4F2),
+      backgroundColor: AdminTokens.bg,
       body: RefreshIndicator(
         onRefresh: _loadData,
         color: AppColors.primary,
+        backgroundColor: Colors.white,
         strokeWidth: 2.5,
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
-            _buildSliverAppBar(),
-            SliverToBoxAdapter(
-              child: FadeTransition(
-                opacity: _fadeAnim,
-                child: SlideTransition(
-                  position: _slideAnim,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(18, 22, 18, 36),
+            SliverToBoxAdapter(child: _buildHeader()),
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(
+                  16, 20, 16, 32 + MediaQuery.of(context).padding.bottom),
+              sliver: SliverToBoxAdapter(
+                child: FadeTransition(
+                  opacity: _fadeAnim,
+                  child: SlideTransition(
+                    position: _slideAnim,
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         _buildStatGrid(),
                         const SizedBox(height: 16),
                         _buildCommissionCard(),
                         const SizedBox(height: 28),
-                        _buildSectionHeader(
-                            'الوصول السريع', Icons.grid_view_rounded),
+                        const AdminSectionTitle(
+                          title: 'الوصول السريع',
+                          icon: Icons.grid_view_rounded,
+                        ),
                         const SizedBox(height: 14),
                         _buildQuickAccess(),
                       ],
@@ -178,206 +179,115 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
     );
   }
 
-  Widget _buildSliverAppBar() {
-    return SliverAppBar(
-      expandedHeight: 170,
-      pinned: true,
-      backgroundColor: AppColors.primary,
-      elevation: 0,
-      actions: [
-        Padding(
-          padding: const EdgeInsets.only(left: 16),
-          child: GestureDetector(
-            onTap: _logout,
+  // ── Header (scrolls away; no empty pinned bar) ────────────
+  Widget _buildHeader() {
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: const BoxDecoration(
+        gradient: AdminTokens.headerGradient,
+        borderRadius: BorderRadius.vertical(bottom: Radius.circular(28)),
+      ),
+      child: Stack(
+        children: [
+          PositionedDirectional(
+            top: -50,
+            start: -40,
             child: Container(
-              padding: const EdgeInsets.all(9),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.18),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white.withOpacity(0.1)),
-              ),
-              child: const Icon(Icons.logout_rounded,
-                  color: Colors.white, size: 18),
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(left: 16),
-          child: GestureDetector(
-            onTap:() => context.push('/notifications'),
-            child: Container(
-              padding: const EdgeInsets.all(9),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.18),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white.withOpacity(0.1)),
-              ),
-              child: const Icon(Icons.notifications_none_rounded,
-                  color: Colors.white, size: 18),
-            ),
-          ),
-        ),
-      ],
-      flexibleSpace: FlexibleSpaceBar(
-        background: Stack(
-          children: [
-            Container(
+              width: 170,
+              height: 170,
               decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Color(0xFF1B6B44),
-                    AppColors.primary,
-                    Color(0xFF2ECC8B)
-                  ],
-                  begin: Alignment.topRight,
-                  end: Alignment.bottomLeft,
-                ),
+                shape: BoxShape.circle,
+                color: AdminTokens.onBrand05,
               ),
             ),
-            Positioned(
-              top: -40,
-              left: -40,
-              child: Container(
-                width: 160,
-                height: 160,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white.withOpacity(0.06),
-                ),
+          ),
+          PositionedDirectional(
+            bottom: -40,
+            end: 30,
+            child: Container(
+              width: 120,
+              height: 120,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: AdminTokens.onBrand05,
               ),
             ),
-            Positioned(
-              bottom: -10,
-              right: 30,
-              child: Container(
-                width: 110,
-                height: 110,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white.withOpacity(0.06),
-                ),
-              ),
-            ),
-            Positioned(
-              top: 40,
-              right: -20,
-              child: Container(
-                width: 70,
-                height: 70,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white.withOpacity(0.04),
-                ),
-              ),
-            ),
-            SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 14, 20, 22),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Row(
+          ),
+          SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsetsDirectional.fromSTEB(20, 14, 12, 28),
+              child: Row(
+                children: [
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: AdminTokens.onBrand20,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: AdminTokens.onBrand15),
+                    ),
+                    child: const Icon(Icons.admin_panel_settings_rounded,
+                        color: Colors.white, size: 26),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        Container(
-                          width: 48,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                                color: Colors.white.withOpacity(0.15)),
-                          ),
-                          child: const Icon(
-                            Icons.admin_panel_settings_rounded,
-                            color: Colors.white,
-                            size: 24,
-                          ),
-                        ),
-                        const SizedBox(width: 14),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        Text('لوحة الإدارة',
+                            style: AdminText.heroTitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis),
+                        const SizedBox(height: 2),
+                        Row(
                           children: [
-                            Text(
-                              'لوحة الإدارة',
-                              style: GoogleFonts.cairo(
-                                fontSize: 23,
-                                fontWeight: FontWeight.w800,
-                                color: Colors.white,
-                                letterSpacing: -0.3,
-                              ),
-                            ),
-                            Row(
-                              children: [
-                                Container(
-                                  width: 6,
-                                  height: 6,
-                                  decoration: const BoxDecoration(
-                                    color: Color(0xFF69F0AE),
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                                const SizedBox(width: 5),
-                                Text(
-                                  'مرحباً بك — ملخص اليوم',
-                                  style: GoogleFonts.cairo(
-                                    fontSize: 12.5,
-                                    color: Colors.white.withOpacity(0.75),
-                                  ),
-                                ),
-                              ],
+                            const AdminLiveDot(size: 6),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                  _role == null
+                                      ? 'مرحباً بك — ملخص اليوم'
+                                      : '${StaffRole.label(_role)} — ملخص اليوم',
+                                  style: AdminText.headerSub,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis),
                             ),
                           ],
                         ),
                       ],
                     ),
-                  ],
-                ),
+                  ),
+                  AdminIconButton(
+                    icon: Icons.notifications_none_rounded,
+                    tooltip: 'الإشعارات',
+                    onTap: () => context.push('/notifications'),
+                  ),
+                  const SizedBox(width: 8),
+                  AdminIconButton(
+                    icon: Icons.logout_rounded,
+                    tooltip: 'تسجيل الخروج',
+                    onTap: _confirmLogout,
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildSectionHeader(String title, IconData icon) {
-    return Row(
-      children: [
-        Container(
-          width: 4,
-          height: 22,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [AppColors.primary, Color(0xFF2ECC8B)],
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-            ),
-            borderRadius: BorderRadius.circular(2),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Icon(icon, color: AppColors.primary, size: 17),
-        const SizedBox(width: 7),
-        Text(
-          title,
-          style: GoogleFonts.cairo(
-            fontSize: 16,
-            fontWeight: FontWeight.w800,
-            color: AppColors.accent,
-          ),
-        ),
-      ],
-    );
-  }
-
+  // ── Stats ────────────────────────────────────────────────
   Widget _buildStatGrid() {
     final s = _stats;
+    final showSkeleton = _isLoading && s == null;
 
     final cards = [
       _StatCardData(
         icon: Icons.people_rounded,
-        gradient: const [Color(0xFF1B5E42), AppColors.primary],
+        gradient: const [AdminTokens.primaryDeep, AppColors.primary],
         label: 'إجمالي المشتركين',
         value: s != null ? '${s.totalSubscribers}' : '—',
         trend: '+3 هذا الشهر',
@@ -385,157 +295,115 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
       ),
       _StatCardData(
         icon: Icons.account_balance_wallet_rounded,
-        gradient: const [Color(0xFF1565C0), Color(0xFF1E88E5)],
+        gradient: const [Color(0xFF0D47A1), Color(0xFF1976D2)],
         label: 'صندوق التطبيق',
-        value: s != null ? '\$${s.appFundBalance.toStringAsFixed(0)}' : '—',
+        value: s != null ? AdminFmt.money(s.appFundBalance) : '—',
         trend: 'متاح للتحويل',
         trendIcon: Icons.check_circle_outline_rounded,
       ),
       _StatCardData(
         icon: Icons.volunteer_activism_rounded,
-        gradient: const [Color(0xFF6A1B9A), Color(0xFFAB47BC)],
+        gradient: const [Color(0xFF4A148C), Color(0xFF8E24AA)],
         label: 'صندوق الفريق التطوعي',
-        value:
-        s != null ? '\$${s.charityFundBalance.toStringAsFixed(0)}' : '—',
+        value: s != null ? AdminFmt.money(s.charityFundBalance) : '—',
         trend: 'الرصيد الحالي',
         trendIcon: Icons.account_balance_rounded,
       ),
       _StatCardData(
         icon: Icons.payments_rounded,
-        gradient: const [Color(0xFF2E7D32), Color(0xFF43A047)],
+        gradient: const [Color(0xFF1B5E20), AdminTokens.green],
         label: 'دفعات هذا الشهر',
-        value:
-        s != null ? '\$${s.thisMonthPayments.toStringAsFixed(0)}' : '—',
+        value: s != null ? AdminFmt.money(s.thisMonthPayments) : '—',
         trend: 'هذا الشهر',
         trendIcon: Icons.calendar_month_rounded,
       ),
     ];
 
-    if (_isLoading) {
-      return GridView.count(
-        crossAxisCount: 2,
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        childAspectRatio: 1.55,
-        children: List.generate(4, (_) => _ShimmerCard()),
-      );
-    }
+    return AnimatedSwitcher(
+      duration: AdminTokens.base,
+      child: showSkeleton
+          ? const _StatGridSkeleton(key: ValueKey('stats-skeleton'))
+          : Column(
+        key: const ValueKey('stats-data'),
+        children: [
+          _statRow(cards[0], cards[1]),
+          const SizedBox(height: 12),
+          _statRow(cards[2], cards[3]),
+        ],
+      ),
+    );
+  }
 
-    return GridView.count(
-      crossAxisCount: 2,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      crossAxisSpacing: 12,
-      mainAxisSpacing: 12,
-      childAspectRatio: 1.55,
-      children: cards.map((c) => _StatCard(data: c)).toList(),
+  Widget _statRow(_StatCardData a, _StatCardData b) {
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(child: _StatCard(data: a)),
+          const SizedBox(width: 12),
+          Expanded(child: _StatCard(data: b)),
+        ],
+      ),
     );
   }
 
   // ── بطاقة العمولة ─────────────────────────────────────────
   Widget _buildCommissionCard() {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(20),
-      shadowColor: Colors.black.withOpacity(0.07),
-      elevation: 2,
-      child: InkWell(
-        onTap: _showEditCommissionSheet,
-        borderRadius: BorderRadius.circular(20),
-        splashColor: const Color(0xFFE65100).withOpacity(0.06),
-        highlightColor: const Color(0xFFE65100).withOpacity(0.03),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          child: Row(
-            children: [
-              // أيقونة العمولة
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFF3E0),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Icon(Icons.percent_rounded,
-                    color: Color(0xFFE65100), size: 23),
-              ),
-              const SizedBox(width: 14),
-              // النص
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'نسبة العمولة',
-                      style: GoogleFonts.cairo(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 14,
-                        color: AppColors.textDark,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'اقتطاع تلقائي من كل دفعة',
-                      style: GoogleFonts.cairo(
-                        fontSize: 12,
-                        color: AppColors.textMuted,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              // القيمة الحالية
-              if (_isLoading)
-                Container(
-                  width: 60,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade200,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                )
-              else
-                Container(
-                  padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE65100).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                        color: const Color(0xFFE65100).withOpacity(0.2)),
-                  ),
-                  child: Text(
-                    _commission != null
-                        ? '${_commission!.value.toStringAsFixed(2)}%'
-                        : '—',
-                    style: GoogleFonts.cairo(
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                      color: const Color(0xFFE65100),
-                    ),
-                  ),
-                ),
-              const SizedBox(width: 8),
-              // سهم التعديل
-              Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFF3E0),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(
-                  Icons.edit_rounded,
-                  color: const Color(0xFFE65100).withOpacity(0.7),
-                  size: 14,
-                ),
-              ),
-            ],
+    const accent = AdminTokens.orange;
+    final showSkeleton = _isLoading && _commission == null;
+    final canEdit = StaffRole.canEditCommission(_role);
+
+    return AdminCard(
+      onTap: canEdit ? _showEditCommissionSheet : null,
+      splashColor: accent,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: AdminTokens.orangeSoft,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Icon(Icons.percent_rounded, color: accent, size: 23),
           ),
-        ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('نسبة العمولة', style: AdminText.label),
+                const SizedBox(height: 2),
+                Text('اقتطاع تلقائي من كل دفعة', style: AdminText.caption),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (showSkeleton)
+            const AdminPulse(
+              child: AdminSkeleton(width: 64, height: 30, radius: 10),
+            )
+          else
+            AdminPill(
+              label: _commission != null
+                  ? '${_commission!.value.toStringAsFixed(2)}%'
+                  : '—',
+              color: accent,
+            ),
+          if (canEdit) ...[
+            const SizedBox(width: 8),
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: AdminTokens.orangeSoft,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.edit_rounded, color: accent, size: 16),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -545,7 +413,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
       _QuickItem(
         icon: Icons.people_alt_rounded,
         iconBg: AppColors.primarySoft,
-        iconColor: AppColors.primary,
         accentColor: AppColors.primary,
         title: 'تقرير المشتركين',
         subtitle: 'عرض وتصدير بيانات الاشتراكات',
@@ -554,9 +421,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
       ),
       _QuickItem(
         icon: Icons.swap_horiz_rounded,
-        iconBg: const Color(0xFFE3F2FD),
-        iconColor: const Color(0xFF1565C0),
-        accentColor: const Color(0xFF1565C0),
+        iconBg: AdminTokens.blueSoft,
+        accentColor: AdminTokens.blue,
         title: 'تحويل الصناديق',
         subtitle: 'نقل المبالغ من صندوق التطبيق',
         onTap: () => context.go('/admin/fund-transfer'),
@@ -564,9 +430,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
       ),
       _QuickItem(
         icon: Icons.assessment_rounded,
-        iconBg: const Color(0xFFF3E5F5),
-        iconColor: const Color(0xFF6A1B9A),
-        accentColor: const Color(0xFF6A1B9A),
+        iconBg: AdminTokens.purpleSoft,
+        accentColor: AdminTokens.purple,
         title: 'تقرير الصناديق',
         subtitle: 'متابعة حركة الأموال والتحويلات',
         onTap: () => context.go('/admin/fund-report'),
@@ -574,19 +439,39 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
       ),
       _QuickItem(
         icon: Icons.history_edu_rounded,
-        iconBg: const Color(0xFFE8F5E9),
-        iconColor: const Color(0xFF2E7D32),
-        accentColor: const Color(0xFF2E7D32),
+        iconBg: AdminTokens.greenSoft,
+        accentColor: AdminTokens.green,
         title: 'مدفوعات سابقة',
         subtitle: 'تسجيل دفعات مشتركين قبل التطبيق',
         onTap: () => context.go('/admin/historical-payments'),
         badge: null,
       ),
+    ];
 
+    // items: 0 تقرير المشتركين | 1 تحويل الصناديق | 2 تقرير الصناديق | 3 مدفوعات سابقة
+    // المحاسب يرى التقارير فقط؛ الأدمن يضيف العمليات المالية وإدارة الحسابات.
+    final canFinance = StaffRole.canManageFinance(_role);
+    final visible = <_QuickItem>[
+      items[0],
+      if (canFinance) items[1],
+      items[2],
+      if (canFinance) items[3],
+      if (StaffRole.canManageStaff(_role))
+        _QuickItem(
+          icon: Icons.manage_accounts_rounded,
+          iconBg: AdminTokens.selectSoft,
+          accentColor: AdminTokens.select,
+          title: 'إدارة الحسابات',
+          subtitle: 'إنشاء حسابات المحاسبين وتعطيلها',
+          onTap: () => context.go('/admin/staff'),
+          badge: null,
+        ),
     ];
 
     return Column(
-      children: items.map((item) => _QuickAccessCard(item: item)).toList(),
+      children: [
+        for (final item in visible) _QuickAccessCard(item: item),
+      ],
     );
   }
 }
@@ -597,12 +482,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
 
 class _CommissionEditSheet extends StatefulWidget {
   const _CommissionEditSheet({
-    required this.controller,
     required this.currentValue,
     required this.onSave,
   });
 
-  final TextEditingController controller;
   final double? currentValue;
   final Future<void> Function(double) onSave;
 
@@ -611,11 +494,28 @@ class _CommissionEditSheet extends StatefulWidget {
 }
 
 class _CommissionEditSheetState extends State<_CommissionEditSheet> {
+  late final TextEditingController _controller;
   bool _isSaving = false;
   String? _error;
 
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(
+      text: widget.currentValue != null
+          ? widget.currentValue!.toStringAsFixed(2)
+          : '',
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
   Future<void> _submit() async {
-    final raw = widget.controller.text.trim();
+    final raw = _controller.text.trim();
     final value = double.tryParse(raw);
 
     if (value == null || value < 0 || value > 100) {
@@ -638,188 +538,117 @@ class _CommissionEditSheetState extends State<_CommissionEditSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
+    const accent = AdminTokens.orange;
 
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + bottomPadding),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Handle
-          Center(
-            child: Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-          const SizedBox(height: 20),
-
-          // Header
-          Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFF3E0),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Icon(Icons.percent_rounded,
-                    color: Color(0xFFE65100), size: 22),
-              ),
-              const SizedBox(width: 12),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'تعديل نسبة العمولة',
-                    style: GoogleFonts.cairo(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                      color: AppColors.textDark,
+    return Padding(
+      padding:
+      EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: AppColors.border,
+                      borderRadius: BorderRadius.circular(2),
                     ),
                   ),
-                  if (widget.currentValue != null)
-                    Text(
-                      'الحالية: ${widget.currentValue!.toStringAsFixed(2)}%',
-                      style: GoogleFonts.cairo(
-                        fontSize: 12,
-                        color: AppColors.textMuted,
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: AdminTokens.orangeSoft,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: const Icon(Icons.percent_rounded,
+                          color: accent, size: 22),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('تعديل نسبة العمولة', style: AdminText.title),
+                          if (widget.currentValue != null)
+                            Text(
+                              'الحالية: ${widget.currentValue!.toStringAsFixed(2)}%',
+                              style: AdminText.caption,
+                            ),
+                        ],
                       ),
                     ),
-                ],
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 24),
-
-          // حقل الإدخال
-          Text(
-            'النسبة الجديدة',
-            style: GoogleFonts.cairo(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textDark,
-            ),
-          ),
-          const SizedBox(height: 8),
-          TextFormField(
-            controller: widget.controller,
-            keyboardType:
-            const TextInputType.numberWithOptions(decimal: true),
-            inputFormatters: [
-              FilteringTextInputFormatter.allow(RegExp(r'^\d{0,3}\.?\d{0,2}')),
-            ],
-            autofocus: true,
-            style: GoogleFonts.cairo(
-              fontSize: 22,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textDark,
-            ),
-            decoration: InputDecoration(
-              suffixText: '%',
-              suffixStyle: GoogleFonts.cairo(
-                fontSize: 18,
-                color: AppColors.textMuted,
-              ),
-              hintText: '0.00',
-              hintStyle: GoogleFonts.cairo(color: Colors.grey.shade400),
-              errorText: _error,
-              errorStyle: GoogleFonts.cairo(fontSize: 12),
-              filled: true,
-              fillColor: const Color(0xFFF8F9FA),
-              contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 14),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide(color: Colors.grey.shade200),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide(color: Colors.grey.shade200),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide:
-                const BorderSide(color: Color(0xFFE65100), width: 1.5),
-              ),
-              errorBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide:
-                BorderSide(color: AppColors.error, width: 1.5),
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 24),
-
-          // أزرار
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed:
-                  _isSaving ? null : () => Navigator.of(context).pop(),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                    side: BorderSide(color: Colors.grey.shade300),
-                  ),
-                  child: Text(
-                    'إلغاء',
-                    style: GoogleFonts.cairo(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textMuted,
-                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                Text('النسبة الجديدة', style: AdminText.captionBold),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _controller,
+                  autofocus: true,
+                  textInputAction: TextInputAction.done,
+                  keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(
+                        RegExp(r'^\d{0,3}\.?\d{0,2}')),
+                  ],
+                  onChanged: (_) {
+                    if (_error != null) setState(() => _error = null);
+                  },
+                  onSubmitted: (_) => _isSaving ? null : _submit(),
+                  style: AdminText.number,
+                  decoration: adminInputDecoration(
+                    hint: '0.00',
+                    suffixText: '%',
+                    errorText: _error,
+                    focusColor: accent,
                   ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                flex: 2,
-                child: ElevatedButton(
-                  onPressed: _isSaving ? null : _submit,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFE65100),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                    elevation: 0,
-                  ),
-                  child: _isSaving
-                      ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: AdminButton(
+                        label: 'إلغاء',
+                        outlined: true,
+                        color: AppColors.textMuted,
+                        onPressed: _isSaving
+                            ? null
+                            : () => Navigator.of(context).pop(),
+                      ),
                     ),
-                  )
-                      : Text(
-                    'حفظ التغييرات',
-                    style: GoogleFonts.cairo(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: AdminButton(
+                        label: 'حفظ التغييرات',
+                        color: accent,
+                        loading: _isSaving,
+                        onPressed: _submit,
+                      ),
                     ),
-                  ),
+                  ],
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -850,7 +679,6 @@ class _StatCardData {
 class _QuickItem {
   final IconData icon;
   final Color iconBg;
-  final Color iconColor;
   final Color accentColor;
   final String title;
   final String subtitle;
@@ -860,7 +688,6 @@ class _QuickItem {
   const _QuickItem({
     required this.icon,
     required this.iconBg,
-    required this.iconColor,
     required this.accentColor,
     required this.title,
     required this.subtitle,
@@ -873,41 +700,22 @@ class _QuickItem {
 // WIDGETS
 // ═══════════════════════════════════════════════════════════
 
-class _ShimmerCard extends StatefulWidget {
-  @override
-  State<_ShimmerCard> createState() => _ShimmerCardState();
-}
-
-class _ShimmerCardState extends State<_ShimmerCard>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _ctrl;
-  late Animation<double> _anim;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 900))
-      ..repeat(reverse: true);
-    _anim = CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut);
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
+class _StatGridSkeleton extends StatelessWidget {
+  const _StatGridSkeleton({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _anim,
-      builder: (_, __) => Container(
-        decoration: BoxDecoration(
-          color:
-          Color.lerp(Colors.grey.shade200, Colors.grey.shade100, _anim.value),
-          borderRadius: BorderRadius.circular(20),
-        ),
+    Widget row() => const Row(
+      children: [
+        Expanded(child: AdminSkeleton(height: 148, radius: 20)),
+        SizedBox(width: 12),
+        Expanded(child: AdminSkeleton(height: 148, radius: 20)),
+      ],
+    );
+
+    return AdminPulse(
+      child: Column(
+        children: [row(), const SizedBox(height: 12), row()],
       ),
     );
   }
@@ -919,99 +727,63 @@ class _StatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: data.gradient,
-          begin: Alignment.topRight,
-          end: Alignment.bottomLeft,
+    return Semantics(
+      label: '${data.label}: ${data.value}',
+      excludeSemantics: true,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: data.gradient,
+            begin: Alignment.topRight,
+            end: Alignment.bottomLeft,
+          ),
+          borderRadius: BorderRadius.circular(AdminTokens.rLg),
+          boxShadow: AdminTokens.glow(data.gradient.first),
         ),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: data.gradient.first.withOpacity(0.35),
-            blurRadius: 18,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Stack(
-        children: [
-          Positioned(
-            top: -12,
-            left: -12,
-            child: Container(
-              width: 60,
-              height: 70,
-              decoration: BoxDecoration(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: const BoxDecoration(
+                color: AdminTokens.onBrand20,
                 shape: BoxShape.circle,
-                color: Colors.white.withOpacity(0.08),
               ),
+              child: Icon(data.icon, color: Colors.white, size: 19),
             ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  SizedBox(
-                    width: 38,
-                    height: 12,
-                    child: Icon(data.icon, color: Colors.white, size: 20),
+            const SizedBox(height: 14),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: AlignmentDirectional.centerStart,
+              child: Text(data.value, style: AdminText.statValue),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              data.label,
+              style: AdminText.onBrandLabel.copyWith(fontSize: 12),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Icon(data.trendIcon, size: 13, color: AdminTokens.onBrand85),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    data.trend,
+                    style: AdminText.onBrandCaption,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  Container(
-                    padding:
-                    const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(data.trendIcon,
-                            size: 10, color: Colors.white.withOpacity(0.9)),
-                        const SizedBox(width: 3),
-                        Text(
-                          data.trend,
-                          style: GoogleFonts.cairo(
-                            fontSize: 9,
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                data.value,
-                style: GoogleFonts.cairo(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
-                  color: Colors.white,
-                  height: 1,
                 ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                data.label,
-                style: GoogleFonts.cairo(
-                  fontSize: 11,
-                  color: Colors.white.withOpacity(0.75),
-                  height: 1.2,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
-          ),
-        ],
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1025,92 +797,40 @@ class _QuickAccessCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: Material(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        shadowColor: Colors.black.withOpacity(0.06),
-        elevation: 2,
-        child: InkWell(
-          onTap: item.onTap,
-          borderRadius: BorderRadius.circular(18),
-          splashColor: item.accentColor.withOpacity(0.06),
-          highlightColor: item.accentColor.withOpacity(0.03),
-          child: Padding(
-            padding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            child: Row(
-              children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: item.iconBg,
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Icon(item.icon, color: item.iconColor, size: 23),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        item.title,
-                        style: GoogleFonts.cairo(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 14,
-                          color: AppColors.textDark,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        item.subtitle,
-                        style: GoogleFonts.cairo(
-                          fontSize: 12,
-                          color: AppColors.textMuted,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                if (item.badge != null) ...[
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: item.accentColor.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                          color: item.accentColor.withOpacity(0.2), width: 1),
-                    ),
-                    child: Text(
-                      item.badge!,
-                      style: GoogleFonts.cairo(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: item.accentColor,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: item.iconBg,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(
-                    Icons.arrow_back_ios_rounded,
-                    color: item.iconColor.withOpacity(0.7),
-                    size: 12,
-                  ),
-                ),
-              ],
+      child: AdminCard(
+        onTap: item.onTap,
+        splashColor: item.accentColor,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: item.iconBg,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(item.icon, color: item.accentColor, size: 23),
             ),
-          ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(item.title, style: AdminText.label),
+                  const SizedBox(height: 2),
+                  Text(item.subtitle, style: AdminText.caption),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            if (item.badge != null) ...[
+              AdminPill(label: item.badge!, color: item.accentColor),
+              const SizedBox(width: 8),
+            ],
+            const Icon(Icons.arrow_forward_ios_rounded,
+                color: AppColors.textMuted, size: 14),
+          ],
         ),
       ),
     );

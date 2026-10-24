@@ -54,6 +54,7 @@ dependencies:
   firebase_core: ^3.4.0
   flutter_launcher_icons: ^0.14.4
   open_filex: ^4.3.4
+  share_plus: ^10.0.0
 
 dev_dependencies:
   flutter_test:

@@ -21,6 +21,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../../core/constants/app_strings.dart';
+import '../../../../core/network/session_guard.dart';
 
 // ── تغيير هذا السطر فقط عند الانتقال للـ API الحقيقي ──────
 const bool _kUseMock = false;
@@ -59,6 +60,9 @@ class AuthRepository {
         onError: (error, handler) => handler.next(error),
       ),
     );
+
+    // 401 → مسح الجلسة والعودة تلقائياً لشاشة الدخول (انظر core/network/session_guard.dart)
+    _dio.interceptors.add(SessionExpiredInterceptor());
   }
 
   late final Dio _dio;
@@ -154,7 +158,7 @@ class AuthRepository {
     try {
       final fcmToken = await _getFcmToken();
 
-      await _dio.post('/register', data: {
+      final response = await _dio.post('/register', data: {
         'full_name': fullName,
         'email':     email,
         'phone':     phone,
@@ -163,6 +167,14 @@ class AuthRepository {
       });
 
       await _storage.write(key: 'pending_email', value: email);
+
+      // تذكرة سرية من السيرفر: بدونها لا يُسلَّم توكن الدخول التلقائي بعد توثيق البريد
+      // (كان أي شخص يعرف بريداً موثّقاً يحصل على توكنه).
+      final data = _parseResponse(response.data);
+      final ticket = data['verification_ticket']?.toString();
+      if (ticket != null && ticket.isNotEmpty) {
+        await _storage.write(key: 'verification_ticket', value: ticket);
+      }
     } on DioException catch (e) {
       throw AuthException(_mapDioError(e));
     }
@@ -182,9 +194,10 @@ class AuthRepository {
 
     try {
       final email = await _storage.read(key: 'pending_email') ?? '';
+      final ticket = await _storage.read(key: 'verification_ticket') ?? '';
       final response = await _dio.get(
         '/auth/email-verification-status',
-        queryParameters: {'email': email},
+        queryParameters: {'email': email, 'ticket': ticket},
       );
       final data = _parseResponse(response.data);
       final verified = data['email_verified'] == true;
@@ -199,10 +212,14 @@ class AuthRepository {
           if (user is Map) await _saveUserData(user);
 
           await _storage.delete(key: 'pending_email');
+          await _storage.delete(key: 'verification_ticket');
+          return true;
         }
+        // موثّق بلا توكن (لا يحدث مع التذكرة الصالحة) → لا ننتقل للشاشة التالية بلا جلسة
+        return false;
       }
 
-      return verified;
+      return false;
     } on DioException catch (e) {
       throw AuthException(_mapDioError(e));
     }
@@ -305,6 +322,51 @@ class AuthRepository {
       } catch (_) {}
     }
     return {};
+  }
+
+  // ══════════════════════════════════════════════════════
+  //  5. FORGOT / RESET PASSWORD (رمز من 6 أرقام عبر البريد)
+  //     POST /auth/forgot-password  {email}
+  //     POST /auth/reset-password   {email, code, password}
+  // ══════════════════════════════════════════════════════
+
+  /// يطلب إرسال الرمز. الخادم يرد بنفس الرسالة سواء كان البريد مسجلاً أم لا.
+  /// يُرجع عدد الثواني قبل السماح بإعادة الإرسال.
+  Future<int> forgotPassword({required String email}) async {
+    if (_kUseMock) {
+      await _mockDelay();
+      return 60;
+    }
+    try {
+      final response =
+      await _dio.post('/auth/forgot-password', data: {'email': email});
+      final data = _parseResponse(response.data);
+      final wait = data['resend_after_seconds'];
+      return wait is num ? wait.toInt() : 60;
+    } on DioException catch (e) {
+      throw AuthException(_mapDioError(e));
+    }
+  }
+
+  /// يعيّن كلمة المرور الجديدة بالرمز. لا يسجّل الدخول تلقائياً.
+  Future<void> resetPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    if (_kUseMock) {
+      await _mockDelay();
+      return;
+    }
+    try {
+      await _dio.post('/auth/reset-password', data: {
+        'email': email,
+        'code': code,
+        'password': newPassword,
+      });
+    } on DioException catch (e) {
+      throw AuthException(_mapDioError(e));
+    }
   }
 
   // ── Error mapper ──────────────────────────────────────

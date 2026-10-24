@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/utils/formatters.dart';
 import '../../../../shared/widgets/app_button.dart';
 import '../../data/repositories/subscriber_repository.dart';
 
@@ -30,6 +31,7 @@ class _SubscriptionSetupScreenState extends State<SubscriptionSetupScreen>
   static const double _fixedFee = 0.5;
   double _commissionRate = 0.0; // تُحدَّث من getCommission()
   bool _isLoadingCommission = true;
+  bool _commissionFailed = false; // فشل الجلب: لا نُظهر 0% كأنها العمولة الفعلية
 
   double get _commissionPerMonth =>
       _monthlyAmount > 0 ? _monthlyAmount * (_commissionRate / 100) : 0;
@@ -68,11 +70,18 @@ class _SubscriptionSetupScreenState extends State<SubscriptionSetupScreen>
   }
 
   Future<void> _loadCommission() async {
+    if (mounted) {
+      setState(() {
+        _isLoadingCommission = true;
+        _commissionFailed = false;
+      });
+    }
     try {
       final rate = await _repo.getCommission();
       if (mounted) setState(() => _commissionRate = rate);
     } catch (_) {
-      // في حال الفشل تبقى 0
+      // كان الفشل يُبتلع بصمت فيظهر 0% وكأنها العمولة الحقيقية
+      if (mounted) setState(() => _commissionFailed = true);
     } finally {
       if (mounted) setState(() => _isLoadingCommission = false);
     }
@@ -91,6 +100,10 @@ class _SubscriptionSetupScreenState extends State<SubscriptionSetupScreen>
     final amount = double.tryParse(_amountController.text.trim()) ?? 0;
     if (amount <= 0) {
       _showError('يرجى إدخال مبلغ صحيح أكبر من الصفر');
+      return;
+    }
+    if (amount < PackageRules.minAnnual || amount > PackageRules.maxAnnual) {
+      _showError(PackageRules.rangeMessage);
       return;
     }
 
@@ -115,18 +128,18 @@ class _SubscriptionSetupScreenState extends State<SubscriptionSetupScreen>
     ));
   }
 
-  // ── صف رسوم مساعد ─────────────────────────────────
+  // ── صف رسوم مساعد (التسمية مرنة: لا overflow مع الخط الكبير) ──────
   Widget _feeRow(String label, String value, Color color) {
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label,
-          style: GoogleFonts.cairo(
-            fontSize: 12,
-            color: color.withOpacity(0.8),
+        Expanded(
+          child: Text(
+            label,
+            style: GoogleFonts.cairo(fontSize: 12, color: color),
           ),
         ),
+        const SizedBox(width: 12),
         Text(
           value,
           style: GoogleFonts.cairo(
@@ -136,6 +149,132 @@ class _SubscriptionSetupScreenState extends State<SubscriptionSetupScreen>
           ),
         ),
       ],
+    );
+  }
+
+  /// بطاقة الرسوم. ألوانها من AppColors.warning* (كانت 5 ألوان يدوية، وإجمالي
+  /// الدفعة بـ #FF9900 على #FFF8EC بتباين ≈ 2:1).
+  /// الرسم الثابت يُحتسب مرة لكل عملية دفع (كما في الرئيسية)، لا لكل شهر.
+  Widget _buildFeeCard() {
+    const text = AppColors.warningDark;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.warningLight,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.warningBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withAlpha(31),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(
+                  Icons.account_balance_wallet_rounded,
+                  color: AppColors.warning,
+                  size: 15,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'رسوم الدفع الإلكتروني',
+                  style: GoogleFonts.cairo(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.warningText,
+                  ),
+                ),
+              ),
+              if (_isLoadingCommission)
+                const SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.5,
+                    color: AppColors.warning,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          const Divider(color: AppColors.warningBorder, height: 1),
+          const SizedBox(height: 10),
+          _feeRow('مبلغ الاشتراك (شهر واحد)', Fmt.money2(_monthlyAmount), text),
+          const SizedBox(height: 6),
+          _feeRow(
+            _commissionFailed
+                ? 'عمولة خدمة الدفع'
+                : 'عمولة خدمة الدفع (${_commissionRate.toStringAsFixed(0)}%)',
+            _commissionFailed ? '—' : '+ ${Fmt.money2(_commissionPerMonth)}',
+            text,
+          ),
+          const SizedBox(height: 6),
+          _feeRow('رسم معالجة ثابت (لكل عملية دفع)', '+ ${Fmt.money2(_fixedFee)}', text),
+          const SizedBox(height: 10),
+          const Divider(color: AppColors.warningBorder, height: 1),
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  'إجمالي دفع شهر واحد',
+                  style: GoogleFonts.cairo(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.warningText,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                Fmt.money2(_totalPerMonth),
+                style: GoogleFonts.cairo(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                  color: AppColors.warningText,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'عند دفع عدة أشهر معاً يُحتسب الرسم الثابت مرة واحدة فقط.',
+            style: GoogleFonts.cairo(fontSize: 12, color: text, height: 1.5),
+          ),
+          if (_commissionFailed) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Icon(Icons.error_outline_rounded,
+                    size: 16, color: AppColors.error),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'تعذّر جلب نسبة العمولة، فالإجمالي أعلاه غير نهائي.',
+                    style: GoogleFonts.cairo(fontSize: 12, color: AppColors.error),
+                  ),
+                ),
+                TextButton(
+                  onPressed: _loadCommission,
+                  style: TextButton.styleFrom(minimumSize: const Size(48, 44)),
+                  child: Text('إعادة المحاولة',
+                      style: GoogleFonts.cairo(fontSize: 12, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
     );
   }
 
@@ -324,6 +463,11 @@ class _SubscriptionSetupScreenState extends State<SubscriptionSetupScreen>
                               if (parsed == null || parsed <= 0) {
                                 return 'يرجى إدخال مبلغ صحيح أكبر من الصفر';
                               }
+                              // نفس حدود «تعديل الباقة» (كان هنا أي مبلغ > 0)
+                              if (parsed < PackageRules.minAnnual ||
+                                  parsed > PackageRules.maxAnnual) {
+                                return PackageRules.rangeMessage;
+                              }
                               return null;
                             },
                           ),
@@ -409,130 +553,7 @@ class _SubscriptionSetupScreenState extends State<SubscriptionSetupScreen>
                                 const SizedBox(height: 12),
 
                                 // ── تفاصيل رسوم الدفع ──────────────
-                                Container(
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.all(16),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFFFF8EC),
-                                    borderRadius:
-                                    BorderRadius.circular(14),
-                                    border: Border.all(
-                                      color: const Color(0xFFFFD580)
-                                          .withOpacity(0.6),
-                                    ),
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                    CrossAxisAlignment.start,
-                                    children: [
-                                      // عنوان البطاقة
-                                      Row(
-                                        children: [
-                                          Container(
-                                            width: 28,
-                                            height: 28,
-                                            decoration: BoxDecoration(
-                                              color: const Color(
-                                                  0xFFFF9900)
-                                                  .withOpacity(0.12),
-                                              borderRadius:
-                                              BorderRadius.circular(
-                                                  8),
-                                            ),
-                                            child: const Icon(
-                                              Icons
-                                                  .account_balance_wallet_rounded,
-                                              color: Color(0xFFFF9900),
-                                              size: 15,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 8),
-                                          Text(
-                                            'رسوم الدفع الإلكتروني (لكل شهر)',
-                                            style: GoogleFonts.cairo(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.bold,
-                                              color:
-                                              const Color(0xFF7A4F00),
-                                            ),
-                                          ),
-                                          if (_isLoadingCommission) ...[
-                                            const SizedBox(width: 8),
-                                            const SizedBox(
-                                              width: 12,
-                                              height: 12,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 1.5,
-                                                color: Color(0xFFFF9900),
-                                              ),
-                                            ),
-                                          ],
-                                        ],
-                                      ),
-                                      const SizedBox(height: 10),
-                                      const Divider(
-                                          color: Color(0xFFFFD580),
-                                          height: 1),
-                                      const SizedBox(height: 10),
-
-                                      // صف: المبلغ الأصلي
-                                      _feeRow(
-                                        'مبلغ الاشتراك',
-                                        '\$${_monthlyAmount.toStringAsFixed(2)}',
-                                        const Color(0xFF5A3E00),
-                                      ),
-                                      const SizedBox(height: 6),
-
-                                      // صف: عمولة ديناميكية
-                                      _feeRow(
-                                        'عمولة خدمة الدفع (${_commissionRate.toStringAsFixed(0)}%)',
-                                        '+ \$${_commissionPerMonth.toStringAsFixed(2)}',
-                                        const Color(0xFF5A3E00),
-                                      ),
-                                      const SizedBox(height: 6),
-
-                                      // صف: رسم ثابت
-                                      _feeRow(
-                                        'رسم معالجة ثابت',
-                                        '+ \$${_fixedFee.toStringAsFixed(2)}',
-                                        const Color(0xFF5A3E00),
-                                      ),
-
-                                      const SizedBox(height: 10),
-                                      const Divider(
-                                          color: Color(0xFFFFD580),
-                                          height: 1),
-                                      const SizedBox(height: 10),
-
-                                      // صف: الإجمالي
-                                      Row(
-                                        mainAxisAlignment:
-                                        MainAxisAlignment
-                                            .spaceBetween,
-                                        children: [
-                                          Text(
-                                            'إجمالي الدفعة الشهرية',
-                                            style: GoogleFonts.cairo(
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w800,
-                                              color:
-                                              const Color(0xFF7A4F00),
-                                            ),
-                                          ),
-                                          Text(
-                                            '\$${_totalPerMonth.toStringAsFixed(2)}',
-                                            style: GoogleFonts.cairo(
-                                              fontSize: 15,
-                                              fontWeight: FontWeight.w900,
-                                              color:
-                                              const Color(0xFFFF9900),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                ),
+                                _buildFeeCard(),
                               ],
                             )
                                 : const SizedBox.shrink(

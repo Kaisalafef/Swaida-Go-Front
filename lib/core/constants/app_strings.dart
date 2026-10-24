@@ -11,6 +11,12 @@ class AppStrings {
   static const String skip           = 'تخطي';
   static const String next           = 'التالي';
   static const String getStarted     = 'ابدأ الآن';
+  static const String back           = 'رجوع';
+  static const String loading        = 'جارٍ التحميل';
+  static const String pressBackAgain = 'اضغط مرة أخرى للخروج';
+  static const String splashTagline  = 'منصة الاشتراكات';
+  static String onboardingPageOf(int current, int total) =>
+      'الصفحة $current من $total';
 
   static const String ob1Badge       = '01';
   static const String ob1Title       = 'اشترك بمبلغك المختار';

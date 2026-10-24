@@ -1,18 +1,15 @@
 // lib/features/admin/presentation/screens/admin_subscribers_report_screen.dart
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_fonts/google_fonts.dart';
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
-import 'dart:io';
-import 'package:excel/excel.dart' hide Border;
-import 'package:path_provider/path_provider.dart';
+import 'package:swida_go/features/admin/presentation/screens/widgets/admin_ui.dart';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../data/models/admin_models.dart';
 import '../../data/repositories/admin_repository.dart';
+import '../../data/services/report_exporter.dart';
+
 // import 'package:permission_handler/permission_handler.dart';
+
 class AdminSubscribersReportScreen extends StatefulWidget {
   const AdminSubscribersReportScreen({super.key});
 
@@ -27,6 +24,7 @@ class _AdminSubscribersReportScreenState
 
   List<SubscriberReport> _report = [];
   bool _isLoading = true;
+  List<int> _years = [DateTime.now().year];
 
   late int _selectedMonth;
   late int _selectedYear;
@@ -46,7 +44,18 @@ class _AdminSubscribersReportScreenState
     final now = DateTime.now();
     _selectedMonth = now.month;
     _selectedYear = now.year;
+    _loadYears();
     _loadReport();
+  }
+
+  /// السنوات الموجودة فعلاً في البيانات (بدل القائمة الثابتة 2024–2026)
+  Future<void> _loadYears() async {
+    final years = await _repo.getReportYears();
+    if (!mounted) return;
+    setState(() {
+      _years = years;
+      if (!_years.contains(_selectedYear)) _years = [..._years, _selectedYear]..sort((a, b) => b.compareTo(a));
+    });
   }
 
   Future<void> _loadReport() async {
@@ -58,17 +67,7 @@ class _AdminSubscribersReportScreenState
       );
       if (mounted) setState(() => _report = data);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.toString(), style: GoogleFonts.cairo()),
-            backgroundColor: AppColors.error,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            margin: const EdgeInsets.all(16),
-          ),
-        );
-      }
+      if (mounted) showAdminSnack(context, e.toString());
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -87,388 +86,183 @@ class _AdminSubscribersReportScreenState
       .where((s) => s.months.any((m) => m.status == PaymentStatus.overdue))
       .length;
 
-  double _calcPaid(SubscriberReport s) =>
-      s.months.where((m) => m.status == PaymentStatus.paid).length *
-          s.monthlyAmount;
+  // المبلغ الفعلي المدفوع (من الخادم). الحساب القديم عدد الأشهر × القسط الحالي
+  // كان يعطي رقماً خاطئاً بعد تعديل الباقة أو عند الدفعات بمبلغ مخصص.
+  double _calcPaid(SubscriberReport s) => s.paidTotal;
   Future<void> _exportPdf() async {
-    final doc = pw.Document();
-
-    // تحميل خط Cairo لدعم اللغة العربية من الإنترنت مباشرة أو يمكنك استبداله بخط محلي
-    final font = await PdfGoogleFonts.cairoRegular();
-    final boldFont = await PdfGoogleFonts.cairoBold();
-
-    final monthName = _arabicMonths[_selectedMonth - 1];
-
-    doc.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat.a4.landscape,
-        theme: pw.ThemeData.withFont(
-          base: font,
-          bold: boldFont,
-        ),
-        build: (pw.Context ctx) {
-          return pw.Directionality(
-            textDirection: pw.TextDirection.rtl, // دعم اللغة العربية
-            child: pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
-              children: [
-                pw.Text(
-                  'تقرير المشتركين - $monthName $_selectedYear',
-                  style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
-                ),
-                pw.SizedBox(height: 16),
-                pw.Table(
-                  border: pw.TableBorder.all(color: PdfColors.grey300),
-                  columnWidths: {
-                    0: const pw.FlexColumnWidth(3),
-                    for (int i = 1; i <= 12; i++) i: const pw.FlexColumnWidth(1),
-                    13: const pw.FlexColumnWidth(1.5),
-                  },
-                  children: [
-                    // رأس الجدول
-                    pw.TableRow(
-                      decoration: const pw.BoxDecoration(color: PdfColors.green800),
-                      children: [
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(6),
-                          child: pw.Text('الاسم', style: pw.TextStyle(color: PdfColors.white, fontSize: 10)),
-                        ),
-                        for (final a in _monthAbbrev)
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(4),
-                            child: pw.Text(a, textAlign: pw.TextAlign.center, style: pw.TextStyle(color: PdfColors.white, fontSize: 9)),
-                          ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(4),
-                          child: pw.Text('المجموع', textAlign: pw.TextAlign.center, style: pw.TextStyle(color: PdfColors.white, fontSize: 9)),
-                        ),
-                      ],
-                    ),
-                    // بيانات المشتركين
-                    ..._report.map((s) {
-                      final paid = _calcPaid(s);
-                      return pw.TableRow(children: [
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(5),
-                          child: pw.Text(s.fullName, style: const pw.TextStyle(fontSize: 9)),
-                        ),
-                        for (final m in s.months)
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(4),
-                            child: pw.Text(
-                              m.status == PaymentStatus.paid ? '✓' : (m.status == PaymentStatus.overdue ? '✗' : '-'),
-                              textAlign: pw.TextAlign.center,
-                              style: pw.TextStyle(
-                                fontSize: 9,
-                                color: m.status == PaymentStatus.paid ? PdfColors.green700 : (m.status == PaymentStatus.overdue ? PdfColors.red700 : PdfColors.grey500),
-                              ),
-                            ),
-                          ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(4),
-                          child: pw.Text(
-                            '\$${paid.toStringAsFixed(0)}',
-                            textAlign: pw.TextAlign.center,
-                            style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold, color: PdfColors.green800),
-                          ),
-                        ),
-                      ]);
-                    }),
-                  ],
-                ),
-                pw.SizedBox(height: 12),
-                pw.Text(
-                  'الإجمالي: ${_report.length} | مدفوع: $_fullyPaidCount | متأخر: $_overdueCount',
-                  style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
+    if (_report.isEmpty) {
+      showAdminSnack(context, 'لا توجد بيانات لتصديرها');
+      return;
+    }
+    final bytes = await ReportExporter.subscribersPdf(
+      report: _report,
+      month: _selectedMonth,
+      year: _selectedYear,
+      fullyPaid: _fullyPaidCount,
+      overdue: _overdueCount,
     );
-
-    await Printing.layoutPdf(
-      onLayout: (format) async => doc.save(),
-      name: 'subscribers_${_selectedYear}_$_selectedMonth.pdf',
-    );
+    await ReportExporter.sharePdf(
+        bytes, 'subscribers_${_selectedYear}_$_selectedMonth.pdf');
   }
+
   Future<void> _exportExcel() async {
-    // 1. طلب صلاحيات التخزين للأندرويد
-    // if (Platform.isAndroid) {
-    //   var status = await Permission.storage.status;
-    //   if (!status.isGranted) {
-    //     status = await Permission.storage.request();
-    //     if (!status.isGranted) {
-    //       if (mounted) {
-    //         ScaffoldMessenger.of(context).showSnackBar(
-    //           const SnackBar(content: Text('يجب الموافقة على صلاحيات التخزين لحفظ الملف')),
-    //         );
-    //       }
-    //       return;
-    //     }
-    //   }
-    // }
-
-    final excel = Excel.createExcel();
-    final sheet = excel['تقرير المشتركين'];
-    excel.setDefaultSheet('تقرير المشتركين');
-
-    final headerStyle = CellStyle(
-      bold: true,
-      backgroundColorHex: ExcelColor.fromHexString('#1B5E42'),
-      fontColorHex: ExcelColor.fromHexString('#FFFFFF'),
-      horizontalAlign: HorizontalAlign.Center,
+    if (_report.isEmpty) {
+      showAdminSnack(context, 'لا توجد بيانات لتصديرها');
+      return;
+    }
+    final bytes = ReportExporter.subscribersExcel(
+      report: _report,
+      month: _selectedMonth,
+      year: _selectedYear,
     );
+    await ReportExporter.shareExcel(
+        bytes, 'subscribers_${_selectedYear}_$_selectedMonth.xlsx');
+  }
 
-    final headers = [
-      'الاسم', 'الهاتف',
-      'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
-      'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر',
-      'المجموع المدفوع', 'الاشتراك السنوي',
-    ];
+  // ═════════════════════════════════════════════════════════
+  // UI-ONLY HELPERS (no data / API logic)
+  // ═════════════════════════════════════════════════════════
 
-    for (int i = 0; i < headers.length; i++) {
-      var cell = sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0));
-      cell.value = TextCellValue(headers[i]);
-      cell.cellStyle = headerStyle;
-    }
+  /// Which export is currently running: 'pdf' | 'excel' | null.
+  /// Only drives the button spinner and prevents double taps.
+  String? _busyExport;
 
-    // إضافة البيانات
-    for (int r = 0; r < _report.length; r++) {
-      final s = _report[r];
-      final rowIdx = r + 1;
-      final paidCount = s.months.where((m) => m.status == PaymentStatus.paid).length;
-      final totalPaid = paidCount * s.monthlyAmount;
-
-      sheet.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: rowIdx)).value = TextCellValue(s.fullName);
-      sheet.cell(CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: rowIdx)).value = TextCellValue(s.phone);
-
-      for (int m = 0; m < 12; m++) {
-        final status = s.months[m].status;
-        final symbol = status == PaymentStatus.paid ? '✓' : (status == PaymentStatus.overdue ? '✗' : '–');
-
-        var cell = sheet.cell(CellIndex.indexByColumnRow(columnIndex: m + 2, rowIndex: rowIdx));
-        cell.value = TextCellValue(symbol);
-        cell.cellStyle = CellStyle(
-          horizontalAlign: HorizontalAlign.Center,
-          backgroundColorHex: ExcelColor.fromHexString(status == PaymentStatus.paid ? '#C8E6C9' : (status == PaymentStatus.overdue ? '#FFCDD2' : '#F5F5F5')),
-          fontColorHex: ExcelColor.fromHexString(status == PaymentStatus.paid ? '#1B5E20' : (status == PaymentStatus.overdue ? '#B71C1C' : '#9E9E9E')),
-          bold: true,
-        );
-      }
-
-      sheet.cell(CellIndex.indexByColumnRow(columnIndex: 14, rowIndex: rowIdx)).value = DoubleCellValue(totalPaid);
-      sheet.cell(CellIndex.indexByColumnRow(columnIndex: 15, rowIndex: rowIdx)).value = DoubleCellValue(s.annualAmount);
-    }
-
-    final fileBytes = excel.save();
-    if (fileBytes == null) return;
-
-    // تحديد مسار الحفظ
-    Directory? dir;
-    if (Platform.isAndroid) {
-      dir = Directory('/storage/emulated/0/Download/SwidaGo');
-    } else {
-      dir = await getApplicationDocumentsDirectory();
-    }
-
-    if (!await dir.exists()) await dir.create(recursive: true);
-
-    final fileName = 'subscribers_${_selectedYear}_$_selectedMonth.xlsx';
-    final file = File('${dir.path}/$fileName');
-
+  Future<void> _runExport(String kind, Future<void> Function() action) async {
+    if (_busyExport != null) return;
+    setState(() => _busyExport = kind);
     try {
-      await file.writeAsBytes(fileBytes);
-      if (mounted) _showSuccessDialog(file.path);
+      await action();
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ أثناء الحفظ: ${e.toString()}')),
-        );
-      }
+      if (mounted) showAdminSnack(context, e.toString());
+    } finally {
+      if (mounted) setState(() => _busyExport = null);
     }
   }
-  void _showSuccessDialog(String path) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text('تم الحفظ بنجاح',
-            textAlign: TextAlign.center,
-            style: GoogleFonts.cairo(fontWeight: FontWeight.bold)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.check_circle_outline_rounded, color: AppColors.success, size: 60),
-            const SizedBox(height: 16),
-            Text('تم حفظ التقرير في المسار التالي:',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.cairo(fontSize: 13)),
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.grey[100],
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(path,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 11, color: Colors.blueGrey)),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text('حسناً', style: GoogleFonts.cairo(fontWeight: FontWeight.bold)),
-          ),
-        ],
-      ),
-    );
-  }
+
+  // ═════════════════════════════════════════════════════════
+  // BUILD
+  // ═════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF0F4F2),
+      backgroundColor: AdminTokens.bg,
       body: Column(
         children: [
-          _buildHeader(),
-          _FilterBar(
-            selectedMonth: _selectedMonth,
-            selectedYear: _selectedYear,
-            arabicMonths: _arabicMonths,
-            onMonthChanged: (v) {
-              setState(() => _selectedMonth = v);
-              _loadReport();
-            },
-            onYearChanged: (v) {
-              setState(() => _selectedYear = v);
-              _loadReport();
-            },
-            onExportPdf: _exportPdf,
-            onExportExcel: _exportExcel,
+          AdminHeaderBar(
+            title: 'تقرير المشتركين',
+            subtitle: '${_arabicMonths[_selectedMonth - 1]} $_selectedYear',
+            onBack: () => context.go('/admin/dashboard'),
+            trailing: AdminHeaderBadge('${_report.length} مشترك'),
           ),
-          _SummaryStrip(
-            total: _report.length,
-            fullyPaid: _fullyPaidCount,
-            overdue: _overdueCount,
-          ),
-          _ColumnHeaders(monthAbbrev: _monthAbbrev),
           Expanded(
-            child: _isLoading
-                ? const Center(
-                child: CircularProgressIndicator(color: AppColors.primary))
-                : _report.isEmpty
-                ? Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      width: 72,
-                      height: 72,
-                      decoration: BoxDecoration(
-                        color: AppColors.primarySoft,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(Icons.people_outline_rounded,
-                          size: 36, color: AppColors.primary),
+            child: CustomScrollView(
+              slivers: [
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                  sliver: SliverToBoxAdapter(
+                    child: _FilterCard(
+                      selectedMonth: _selectedMonth,
+                      selectedYear: _selectedYear,
+                      years: _years,
+                      arabicMonths: _arabicMonths,
+                      busyExport: _busyExport,
+                      onMonthChanged: (v) {
+                        setState(() => _selectedMonth = v);
+                        _loadReport();
+                      },
+                      onYearChanged: (v) {
+                        setState(() => _selectedYear = v);
+                        _loadReport();
+                      },
+                      onExportPdf: () => _runExport('pdf', _exportPdf),
+                      onExportExcel: () => _runExport('excel', _exportExcel),
                     ),
-                    const SizedBox(height: 14),
-                    Text('لا توجد بيانات',
-                        style: GoogleFonts.cairo(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.accent)),
-                    const SizedBox(height: 6),
-                    Text('لا يوجد مشتركون في هذه الفترة',
-                        style: GoogleFonts.cairo(
-                            color: AppColors.textMuted, fontSize: 13)),
-                  ],
-                ))
-                : ListView.builder(
-              itemCount: _report.length,
-              itemBuilder: (ctx, i) => _SubscriberRow(
-                report: _report[i],
-                index: i,
-                paidAmount: _calcPaid(_report[i]),
-              ),
+                  ),
+                ),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                  sliver: SliverToBoxAdapter(
+                    child: _SummaryCard(
+                      total: _report.length,
+                      fullyPaid: _fullyPaidCount,
+                      overdue: _overdueCount,
+                    ),
+                  ),
+                ),
+                if (_isLoading)
+                  const SliverToBoxAdapter(child: _ListSkeleton())
+                else if (_report.isEmpty)
+                  const SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: AdminEmptyState(
+                      icon: Icons.people_outline_rounded,
+                      title: 'لا توجد بيانات',
+                      message: 'لا يوجد مشتركون في هذه الفترة',
+                    ),
+                  )
+                else
+                  SliverPadding(
+                    padding: EdgeInsets.fromLTRB(
+                        16, 0, 16, 32 + MediaQuery.of(context).padding.bottom),
+                    sliver: SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                            (ctx, i) => _SubscriberCard(
+                          key: ValueKey(_report[i].id),
+                          report: _report[i],
+                          paidAmount: _calcPaid(_report[i]),
+                          highlightMonth: _selectedMonth,
+                          monthNames: _arabicMonths,
+                        ),
+                        childCount: _report.length,
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildHeader() {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF1B6B44), AppColors.primary, Color(0xFF2ECC8B)],
-          begin: Alignment.topRight,
-          end: Alignment.bottomLeft,
-        ),
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(8, 4, 20, 14),
-          child: Row(
-            children: [
-              IconButton(
-                icon: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.18),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.white.withOpacity(0.1)),
-                  ),
-                  child: const Icon(Icons.arrow_back_ios_rounded,
-                      color: Colors.white, size: 16),
-                ),
-                onPressed: () => context.go('/admin/dashboard'),
-              ),
-              const SizedBox(width: 4),
-              Text(
-                'تقرير المشتركين',
-                style: GoogleFonts.cairo(
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                  fontSize: 18,
-                ),
-              ),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  '${_report.length} مشترك',
-                  style: GoogleFonts.cairo(
-                      fontSize: 12,
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600),
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }
 }
 
 // ═══════════════════════════════════════════════════════════
-// EXTRACTED WIDGETS
+// SHARED STATUS STYLE
 // ═══════════════════════════════════════════════════════════
 
-class _FilterBar extends StatelessWidget {
-  const _FilterBar({
+class _CellStyle {
+  const _CellStyle(this.bg, this.fg, this.icon, this.label);
+  final Color bg;
+  final Color fg;
+  final IconData icon;
+  final String label;
+}
+
+_CellStyle _styleFor(PaymentStatus s) {
+  switch (s) {
+    case PaymentStatus.paid:
+      return const _CellStyle(
+          AdminTokens.paidBg, AdminTokens.paidFg, Icons.check_rounded, 'مدفوع');
+    case PaymentStatus.overdue:
+      return const _CellStyle(AdminTokens.overdueBg, AppColors.error,
+          Icons.close_rounded, 'متأخر');
+    case PaymentStatus.pending:
+      return const _CellStyle(AdminTokens.pendingBg, AppColors.textMuted,
+          Icons.remove_rounded, 'لم يحن بعد');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// WIDGETS
+// ═══════════════════════════════════════════════════════════
+
+class _FilterCard extends StatelessWidget {
+  const _FilterCard({
     required this.selectedMonth,
     required this.selectedYear,
+    required this.years,
     required this.arabicMonths,
+    required this.busyExport,
     required this.onMonthChanged,
     required this.onYearChanged,
     required this.onExportPdf,
@@ -477,140 +271,93 @@ class _FilterBar extends StatelessWidget {
 
   final int selectedMonth;
   final int selectedYear;
+  final List<int> years;
   final List<String> arabicMonths;
+  final String? busyExport;
   final ValueChanged<int> onMonthChanged;
   final ValueChanged<int> onYearChanged;
   final VoidCallback onExportPdf;
   final VoidCallback onExportExcel;
 
-  InputDecoration _dec(String label) => InputDecoration(
-    labelText: label,
-    labelStyle:
-    GoogleFonts.cairo(fontSize: 13, color: AppColors.textMuted),
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-    enabledBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: AppColors.border),
-    ),
-    focusedBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: AppColors.primary, width: 2),
-    ),
-    filled: true,
-    fillColor: AppColors.primarySoft,
-    contentPadding:
-    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-  );
-
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      elevation: 0,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<int>(
-                    value: selectedMonth,
-                    isExpanded: true,
-                    decoration: _dec('الشهر'),
-                    items: List.generate(
-                      12,
-                          (i) => DropdownMenuItem(
-                        value: i + 1,
-                        child: Text(arabicMonths[i],
-                            style: GoogleFonts.cairo(fontSize: 13)),
-                      ),
-                    ),
-                    onChanged: (v) {
-                      if (v != null) onMonthChanged(v);
-                    },
-                  ),
-                ),
-                const SizedBox(width: 10),
-                SizedBox(
-                  width: 110,
-                  child: DropdownButtonFormField<int>(
-                    value: selectedYear,
-                    isExpanded: true,
-                    decoration: _dec('السنة'),
-                    items: [2024, 2025, 2026]
-                        .map((y) => DropdownMenuItem(
-                      value: y,
-                      child: Text('$y',
-                          style: GoogleFonts.cairo(fontSize: 13)),
-                    ))
-                        .toList(),
-                    onChanged: (v) {
-                      if (v != null) onYearChanged(v);
-                    },
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: SizedBox(
-                    height: 64,
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.picture_as_pdf_rounded, size: 16),
-                      label: Text(
-                        'تصدير PDF',
-                        style: GoogleFonts.cairo(
-                            fontWeight: FontWeight.bold, fontSize: 13),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: onExportPdf,
+    final idle = busyExport == null;
+
+    return AdminCard(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: AdminDropdown<int>(
+                  label: 'الشهر',
+                  value: selectedMonth,
+                  items: List.generate(
+                    12,
+                        (i) => DropdownMenuItem(
+                      value: i + 1,
+                      child: Text(arabicMonths[i], style: AdminText.body),
                     ),
                   ),
+                  onChanged: (v) {
+                    if (v != null) onMonthChanged(v);
+                  },
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: SizedBox(
-                    height: 64,
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.table_chart_rounded, size: 16),
-                      label: Text(
-                        'تصدير Excel',
-                        style: GoogleFonts.cairo(
-                            fontWeight: FontWeight.bold, fontSize: 13),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1D6F42),
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: onExportExcel,
-                    ),
-                  ),
+              ),
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 116,
+                child: AdminDropdown<int>(
+                  label: 'السنة',
+                  value: selectedYear,
+                  items: years
+                      .map((y) => DropdownMenuItem(
+                    value: y,
+                    child: Text('$y', style: AdminText.body),
+                  ))
+                      .toList(),
+                  onChanged: (v) {
+                    if (v != null) onYearChanged(v);
+                  },
                 ),
-              ],
-            ),
-          ],
-        ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: AdminButton(
+                  label: 'تصدير PDF',
+                  icon: Icons.picture_as_pdf_rounded,
+                  height: 46,
+                  loading: busyExport == 'pdf',
+                  onPressed: idle ? onExportPdf : null,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: AdminButton(
+                  label: 'تصدير Excel',
+                  icon: Icons.table_chart_rounded,
+                  color: const Color(0xFF1D6F42),
+                  height: 46,
+                  loading: busyExport == 'excel',
+                  onPressed: idle ? onExportExcel : null,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
 }
 
-class _SummaryStrip extends StatelessWidget {
-  const _SummaryStrip({
+class _SummaryCard extends StatelessWidget {
+  const _SummaryCard({
     required this.total,
     required this.fullyPaid,
     required this.overdue,
@@ -621,36 +368,58 @@ class _SummaryStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(
-          bottom: BorderSide(color: AppColors.border.withOpacity(0.5)),
-        ),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+    final divider = VerticalDivider(
+      width: 1,
+      thickness: 1,
+      color: AppColors.border.withOpacity(0.6),
+    );
+
+    return AdminCard(
+      padding: const EdgeInsets.fromLTRB(12, 16, 12, 14),
+      child: Column(
         children: [
-          _SummaryChip(
-            label: 'المشتركين',
-            value: '$total',
-            color: AppColors.primary,
-            icon: Icons.people_rounded,
+          IntrinsicHeight(
+            child: Row(
+              children: [
+                Expanded(
+                  child: _SummaryStat(
+                    label: 'المشتركين',
+                    value: '$total',
+                    color: AppColors.primary,
+                    icon: Icons.people_rounded,
+                  ),
+                ),
+                divider,
+                Expanded(
+                  child: _SummaryStat(
+                    label: 'مدفوعون',
+                    value: '$fullyPaid',
+                    color: AppColors.success,
+                    icon: Icons.check_circle_rounded,
+                  ),
+                ),
+                divider,
+                Expanded(
+                  child: _SummaryStat(
+                    label: 'متأخرون',
+                    value: '$overdue',
+                    color: AppColors.error,
+                    icon: Icons.warning_rounded,
+                  ),
+                ),
+              ],
+            ),
           ),
-          _Divider(),
-          _SummaryChip(
-            label: 'مدفوعون',
-            value: '$fullyPaid',
-            color: AppColors.success,
-            icon: Icons.check_circle_rounded,
-          ),
-          _Divider(),
-          _SummaryChip(
-            label: 'متأخرون',
-            value: '$overdue',
-            color: AppColors.error,
-            icon: Icons.warning_rounded,
+          const SizedBox(height: 14),
+          Divider(height: 1, color: AppColors.border.withOpacity(0.6)),
+          const SizedBox(height: 12),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 16,
+            runSpacing: 6,
+            children: [
+              for (final s in PaymentStatus.values) _LegendItem(style: _styleFor(s)),
+            ],
           ),
         ],
       ),
@@ -658,19 +427,8 @@ class _SummaryStrip extends StatelessWidget {
   }
 }
 
-class _Divider extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 1,
-      height: 36,
-      color: AppColors.border.withOpacity(0.5),
-    );
-  }
-}
-
-class _SummaryChip extends StatelessWidget {
-  const _SummaryChip({
+class _SummaryStat extends StatelessWidget {
+  const _SummaryStat({
     required this.label,
     required this.value,
     required this.color,
@@ -689,235 +447,201 @@ class _SummaryChip extends StatelessWidget {
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 13, color: color.withOpacity(0.7)),
-            const SizedBox(width: 4),
-            Text(value,
-                style: GoogleFonts.cairo(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: color)),
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 6),
+            Text(value, style: AdminText.number.copyWith(color: color)),
           ],
         ),
-        Text(label,
-            style: GoogleFonts.cairo(
-                fontSize: 11, color: AppColors.textMuted)),
+        const SizedBox(height: 2),
+        Text(label, style: AdminText.caption),
       ],
     );
   }
 }
 
-class _ColumnHeaders extends StatelessWidget {
-  const _ColumnHeaders({required this.monthAbbrev});
-  final List<String> monthAbbrev;
+class _LegendItem extends StatelessWidget {
+  const _LegendItem({required this.style});
+  final _CellStyle style;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF1B5E42), AppColors.primary],
-          begin: Alignment.centerRight,
-          end: Alignment.centerLeft,
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 22,
+          height: 22,
+          decoration: BoxDecoration(
+            color: style.bg,
+            borderRadius: BorderRadius.circular(7),
+          ),
+          child: Icon(style.icon, size: 14, color: style.fg),
         ),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          const nameW = 90.0;
-          const totalW = 44.0;
-          const spacing = 4.0;
-          final monthsW =
-              constraints.maxWidth - nameW - totalW - spacing * 2;
+        const SizedBox(width: 6),
+        Text(style.label, style: AdminText.caption),
+      ],
+    );
+  }
+}
 
-          return Row(
-            children: [
-              SizedBox(
-                width: nameW,
-                child: Text('المشترك',
-                    textAlign: TextAlign.right,
-                    style: GoogleFonts.cairo(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white)),
-              ),
-              const SizedBox(width: spacing),
-              SizedBox(
-                width: monthsW,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: monthAbbrev
-                      .map((a) => SizedBox(
-                    width: (monthsW / 12).clamp(10.0, 20.0),
-                    child: Text(a,
-                        textAlign: TextAlign.center,
-                        style: GoogleFonts.cairo(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white.withOpacity(0.9))),
-                  ))
-                      .toList(),
-                ),
-              ),
-              const SizedBox(width: spacing),
-              SizedBox(
-                width: totalW,
-                child: Text('المجموع',
-                    textAlign: TextAlign.center,
-                    style: GoogleFonts.cairo(
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white)),
-              ),
-            ],
-          );
-        },
+class _ListSkeleton extends StatelessWidget {
+  const _ListSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return const AdminPulse(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: Column(
+          children: [
+            AdminSkeleton(height: 150, radius: AdminTokens.rLg),
+            SizedBox(height: 10),
+            AdminSkeleton(height: 150, radius: AdminTokens.rLg),
+            SizedBox(height: 10),
+            AdminSkeleton(height: 150, radius: AdminTokens.rLg),
+          ],
+        ),
       ),
     );
   }
 }
 
-class _SubscriberRow extends StatelessWidget {
-  const _SubscriberRow({
+class _SubscriberCard extends StatelessWidget {
+  const _SubscriberCard({
+    super.key,
     required this.report,
-    required this.index,
     required this.paidAmount,
+    required this.highlightMonth,
+    required this.monthNames,
   });
 
   final SubscriberReport report;
-  final int index;
   final double paidAmount;
-
-  Color _bg(PaymentStatus s) {
-    switch (s) {
-      case PaymentStatus.paid:
-        return const Color(0xFFB9F6CA);
-      case PaymentStatus.overdue:
-        return const Color(0xFFFFCDD2);
-      case PaymentStatus.pending:
-        return const Color(0xFFECEFF1);
-    }
-  }
-
-  Color _fg(PaymentStatus s) {
-    switch (s) {
-      case PaymentStatus.paid:
-        return const Color(0xFF1B5E20);
-      case PaymentStatus.overdue:
-        return AppColors.error;
-      case PaymentStatus.pending:
-        return AppColors.textMuted;
-    }
-  }
-
-  String _sym(PaymentStatus s) {
-    switch (s) {
-      case PaymentStatus.paid:
-        return '✓';
-      case PaymentStatus.overdue:
-        return '✗';
-      case PaymentStatus.pending:
-        return '–';
-    }
-  }
+  final int highlightMonth;
+  final List<String> monthNames;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      child: Container(
-        decoration: BoxDecoration(
-          color: index.isEven ? Colors.white : const Color(0xFFF7FAF8),
-          border: Border(
-            bottom: BorderSide(
-                color: AppColors.border.withOpacity(0.3), width: 0.5),
-          ),
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            const nameW = 90.0;
-            const totalW = 44.0;
-            const spacing = 4.0;
-            final monthsW =
-                constraints.maxWidth - nameW - totalW - spacing * 2;
-            final cellSize = (monthsW / 12).clamp(10.0, 20.0);
+    final months = report.months;
 
-            return Row(
-              children: [
-                SizedBox(
-                  width: nameW,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        report.fullName,
-                        style: GoogleFonts.cairo(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 10.5,
-                            color: AppColors.textDark),
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
-                      ),
-                      Text(
-                        '\$${report.annualAmount.toStringAsFixed(0)}/سنة',
-                        style: GoogleFonts.cairo(
-                            fontSize: 9.5, color: AppColors.textMuted),
-                      ),
-                    ],
-                  ),
+    Widget monthRow(int from) {
+      return Row(
+        children: [
+          for (var i = from; i < from + 6 && i < months.length; i++) ...[
+            if (i != from) const SizedBox(width: 6),
+            Expanded(
+              child: _MonthCell(
+                name: monthNames[months[i].monthNumber - 1],
+                status: months[i].status,
+                highlighted: months[i].monthNumber == highlightMonth,
+              ),
+            ),
+          ],
+        ],
+      );
+    }
+
+    return AdminCard(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: const BoxDecoration(
+                  gradient: AdminTokens.heroGradient,
+                  shape: BoxShape.circle,
                 ),
-                const SizedBox(width: spacing),
-                SizedBox(
-                  width: monthsW,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: report.months.map((m) {
-                      return Container(
-                        width: cellSize,
-                        height: cellSize,
-                        decoration: BoxDecoration(
-                          color: _bg(m.status),
-                          borderRadius:
-                          BorderRadius.circular(cellSize * 0.3),
-                        ),
-                        child: Center(
-                          child: Text(
-                            _sym(m.status),
-                            style: GoogleFonts.cairo(
-                                fontWeight: FontWeight.bold,
-                                fontSize: cellSize * 0.55,
-                                color: _fg(m.status)),
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
+                alignment: Alignment.center,
+                child: Text(
+                  report.fullName.isNotEmpty ? report.fullName[0] : '?',
+                  style: AdminText.label.copyWith(color: Colors.white),
                 ),
-                const SizedBox(width: spacing),
-                SizedBox(
-                  width: totalW,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 3),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(6),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      report.fullName,
+                      style: AdminText.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    child: Text(
-                      '\$${paidAmount.toStringAsFixed(0)}',
-                      textAlign: TextAlign.center,
-                      style: GoogleFonts.cairo(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 11,
-                          color: AppColors.primary),
+                    Text(
+                      '${AdminFmt.money(report.annualAmount)} / سنة',
+                      style: AdminText.caption,
                     ),
-                  ),
+                  ],
                 ),
-              ],
-            );
-          },
+              ),
+              const SizedBox(width: 8),
+              AdminPill(
+                label: 'مدفوع ${AdminFmt.money(paidAmount)}',
+                color: AppColors.primary,
+                icon: Icons.account_balance_wallet_rounded,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          monthRow(0),
+          if (months.length > 6) ...[
+            const SizedBox(height: 6),
+            monthRow(6),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _MonthCell extends StatelessWidget {
+  const _MonthCell({
+    required this.name,
+    required this.status,
+    required this.highlighted,
+  });
+  final String name;
+  final PaymentStatus status;
+  final bool highlighted;
+
+  @override
+  Widget build(BuildContext context) {
+    final st = _styleFor(status);
+
+    return Semantics(
+      label: '$name، ${st.label}',
+      excludeSemantics: true,
+      child: Container(
+        height: 48,
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+        decoration: BoxDecoration(
+          color: st.bg,
+          borderRadius: BorderRadius.circular(10),
+          border: highlighted
+              ? Border.all(color: AppColors.primary, width: 1.6)
+              : null,
         ),
-      ), // Container
-    ); // SizedBox
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                name,
+                style: AdminText.captionBold.copyWith(color: st.fg),
+              ),
+            ),
+            const SizedBox(height: 2),
+            Icon(st.icon, size: 14, color: st.fg),
+          ],
+        ),
+      ),
+    );
   }
 }
