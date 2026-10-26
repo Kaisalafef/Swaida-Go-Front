@@ -507,7 +507,8 @@ class _OptionCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                Icon(Icons.chevron_left_rounded, color: color),
+                // chevron_right يُعكس في RTL فيشير يساراً (اتجاه «تابع»)
+                Icon(Icons.chevron_right_rounded, color: color),
               ],
             ),
           ),

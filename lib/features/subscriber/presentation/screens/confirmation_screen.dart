@@ -55,8 +55,21 @@ class _ConfirmationScreenState extends State<ConfirmationScreen>
       parent: _animController,
       curve: const Interval(0.3, 1.0, curve: Curves.easeOut),
     ));
-    _animController.forward();
     _loadReceipt();
+  }
+
+  bool _motionInit = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_motionInit) return;
+    _motionInit = true;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _animController.value = 1; // «تقليل الحركة»: بلا أنيميشن
+    } else {
+      _animController.forward();
+    }
   }
 
   @override

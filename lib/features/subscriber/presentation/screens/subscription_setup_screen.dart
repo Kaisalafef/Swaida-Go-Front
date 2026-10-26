@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../shared/widgets/blue_app_bar.dart';
 import '../../../../core/utils/formatters.dart';
 import '../../../../shared/widgets/app_button.dart';
 import '../../data/repositories/subscriber_repository.dart';
@@ -55,7 +56,6 @@ class _SubscriptionSetupScreenState extends State<SubscriptionSetupScreen>
       begin: const Offset(0, 0.08),
       end: Offset.zero,
     ).animate(CurvedAnimation(parent: _animController, curve: Curves.easeOutCubic));
-    _animController.forward();
 
     _amountController.addListener(() {
       final text = _amountController.text.trim();
@@ -84,6 +84,20 @@ class _SubscriptionSetupScreenState extends State<SubscriptionSetupScreen>
       if (mounted) setState(() => _commissionFailed = true);
     } finally {
       if (mounted) setState(() => _isLoadingCommission = false);
+    }
+  }
+
+  bool _motionInit = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_motionInit) return;
+    _motionInit = true;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _animController.value = 1; // «تقليل الحركة»: بلا أنيميشن
+    } else {
+      _animController.forward();
     }
   }
 
@@ -284,29 +298,7 @@ class _SubscriptionSetupScreenState extends State<SubscriptionSetupScreen>
       textDirection: TextDirection.rtl,
       child: Scaffold(
         backgroundColor: AppColors.secondary,
-        appBar: AppBar(
-          automaticallyImplyLeading: false,
-          flexibleSpace: Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [AppColors.accent, AppColors.primary],
-                begin: Alignment.topRight,
-                end: Alignment.bottomLeft,
-              ),
-            ),
-          ),
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          title: Text(
-            'إعداد الاشتراك',
-            style: GoogleFonts.cairo(
-              fontWeight: FontWeight.bold,
-              color: AppColors.white,
-              fontSize: 18,
-            ),
-          ),
-          centerTitle: true,
-        ),
+        appBar: const BlueAppBar(title: 'إعداد الاشتراك'),
         body: FadeTransition(
           opacity: _fadeAnim,
           child: SlideTransition(
@@ -576,32 +568,48 @@ class _SubscriptionSetupScreenState extends State<SubscriptionSetupScreen>
                             spacing: 8,
                             runSpacing: 8,
                             children: [60, 120, 180, 240, 360].map((amount) {
-                              return GestureDetector(
-                                onTap: () {
-                                  _amountController.text = amount.toString();
-                                  _amountController.selection =
-                                      TextSelection.fromPosition(
-                                        TextPosition(
-                                          offset: _amountController.text.length,
+                              return Semantics(
+                                button: true,
+                                label:
+                                'اختيار مبلغ ${Fmt.money(amount.toDouble())} سنوياً',
+                                excludeSemantics: true,
+                                child: Material(
+                                  color: AppColors.primarySoft,
+                                  shape: const StadiumBorder(
+                                    side: BorderSide(color: AppColors.border),
+                                  ),
+                                  child: InkWell(
+                                    customBorder: const StadiumBorder(),
+                                    onTap: () {
+                                      _amountController.text = amount.toString();
+                                      _amountController.selection =
+                                          TextSelection.fromPosition(
+                                            TextPosition(
+                                              offset:
+                                              _amountController.text.length,
+                                            ),
+                                          );
+                                    },
+                                    child: ConstrainedBox(
+                                      constraints: const BoxConstraints(
+                                        minHeight: 48,
+                                        minWidth: 72,
+                                      ),
+                                      child: Center(
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 16,
+                                          ),
+                                          child: Text(
+                                            '\$$amount',
+                                            style: GoogleFonts.cairo(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.bold,
+                                              color: AppColors.primary,
+                                            ),
+                                          ),
                                         ),
-                                      );
-                                },
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 8,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.primarySoft,
-                                    borderRadius: BorderRadius.circular(20),
-                                    border: Border.all(color: AppColors.border),
-                                  ),
-                                  child: Text(
-                                    '\$$amount',
-                                    style: GoogleFonts.cairo(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.bold,
-                                      color: AppColors.primary,
+                                      ),
                                     ),
                                   ),
                                 ),

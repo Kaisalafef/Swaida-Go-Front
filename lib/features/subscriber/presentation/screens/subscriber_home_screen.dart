@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../shared/widgets/brand_backdrop.dart';
 import '../../../../core/utils/formatters.dart';
 import '../../../../shared/widgets/app_dialogs.dart';
 import '../../data/models/subscriber_models.dart';
@@ -66,6 +67,14 @@ class _SubscriberHomeScreenState extends State<SubscriberHomeScreen>
     _loadData();
   }
 
+  void _playEntrance() {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _animController.value = 1; // «تقليل الحركة»: بلا أنيميشن
+    } else {
+      _animController.forward(from: 0);
+    }
+  }
+
   @override
   void dispose() {
     _animController.dispose();
@@ -87,7 +96,7 @@ class _SubscriberHomeScreenState extends State<SubscriberHomeScreen>
           _yearStatus = results[2] as YearStatus?;
           if (_isGated) _selectedMonths.clear();
         });
-        _animController.forward(from: 0);
+        _playEntrance();
       }
     } catch (e) {
       if (mounted) _showError(e.toString());
@@ -346,6 +355,7 @@ class _SubscriberHomeScreenState extends State<SubscriberHomeScreen>
                 ),
                 child: const Icon(Icons.person_rounded, color: AppColors.white, size: 20),
               ),
+              tooltip: 'الملف الشخصي',
               onPressed: () => context.go('/profile'),
             ),
             IconButton(
@@ -357,7 +367,8 @@ class _SubscriberHomeScreenState extends State<SubscriberHomeScreen>
                 ),
                 child: const Icon(Icons.notifications_none_rounded, color: AppColors.white, size: 20),
               ),
-              onPressed: ()  => context.push('/notifications'),
+              tooltip: 'الإشعارات',
+              onPressed: () => context.push('/notifications'),
             ),
             const SizedBox(width: 8),
           ],
@@ -365,41 +376,8 @@ class _SubscriberHomeScreenState extends State<SubscriberHomeScreen>
             background: Stack(
               fit: StackFit.expand,
               children: [
-                // Gradient background
-                Container(
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [AppColors.accent, AppColors.primary],
-                      begin: Alignment.topRight,
-                      end: Alignment.bottomLeft,
-                    ),
-                  ),
-                ),
-                // Decorative circles
-                Positioned(
-                  top: -30,
-                  left: -30,
-                  child: Container(
-                    width: 150,
-                    height: 150,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: AppColors.white.withOpacity(0.05),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  bottom: -40,
-                  right: -20,
-                  child: Container(
-                    width: 180,
-                    height: 180,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: AppColors.white.withOpacity(0.04),
-                    ),
-                  ),
-                ),
+                // خلفية الهيدر الأزرق الموحّدة (نفس شاشات الدخول)
+                const BlueBackdrop(),
                 // User info
                 SafeArea(
                   child: Padding(
@@ -682,55 +660,63 @@ class _SubscriberHomeScreenState extends State<SubscriberHomeScreen>
       iconColor = isSelected ? AppColors.primary : AppColors.textMuted;
     }
 
-    return GestureDetector(
-      onTap: isTappable ? () => _toggleMonth(month) : null,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        decoration: BoxDecoration(
-          color: bgColor,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: borderColor, width: isSelected ? 2 : 1.5),
-          boxShadow: isSelected
-              ? [
-            BoxShadow(
-              color: AppColors.primary.withOpacity(0.15),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            )
-          ]
-              : [],
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(statusIcon, color: iconColor, size: 20),
-            const SizedBox(height: 6),
-            Text(
-              month.monthName,
-              style: GoogleFonts.cairo(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: textColor,
-              ),
-            ),
-            if (isSelected) ...[
+    final statusLabel = isPaid ? 'مدفوع' : (isOverdue ? 'متأخر' : 'قادم');
+    return Semantics(
+      button: isTappable,
+      enabled: isTappable,
+      selected: isSelected,
+      excludeSemantics: true,
+      label: '${month.monthName}، $statusLabel${isSelected ? '، محدد' : ''}',
+      child: GestureDetector(
+        onTap: isTappable ? () => _toggleMonth(month) : null,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          decoration: BoxDecoration(
+            color: bgColor,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: borderColor, width: isSelected ? 2 : 1.5),
+            boxShadow: isSelected
+                ? [
+              BoxShadow(
+                color: AppColors.primary.withOpacity(0.15),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              )
+            ]
+                : [],
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(statusIcon, color: iconColor, size: 20),
+              const SizedBox(height: 6),
               Text(
-                '\$${month.amount.toStringAsFixed(2)}',
+                month.monthName,
                 style: GoogleFonts.cairo(
-                  fontSize: 10,
-                  color: AppColors.primary,
-                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: textColor,
                 ),
               ),
-              Text(
-                '+ ${_commissionRate.toStringAsFixed(0)}%',
-                style: GoogleFonts.cairo(
-                  fontSize: 9,
-                  color: AppColors.primary.withOpacity(0.7),
+              if (isSelected) ...[
+                Text(
+                  '\$${month.amount.toStringAsFixed(2)}',
+                  style: GoogleFonts.cairo(
+                    fontSize: 11,
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-              ),
+                Text(
+                  '+ ${_commissionRate.toStringAsFixed(0)}%',
+                  style: GoogleFonts.cairo(
+                    fontSize: 10,
+                    color: AppColors.primary,
+                  ),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );

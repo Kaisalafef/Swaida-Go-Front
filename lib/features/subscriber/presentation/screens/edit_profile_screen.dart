@@ -10,6 +10,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../shared/widgets/blue_app_bar.dart';
 import '../../../../shared/widgets/app_cards.dart';
 import '../../../../shared/widgets/app_button.dart';
 import '../../data/models/subscriber_models.dart';
@@ -192,22 +193,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       textDirection: TextDirection.rtl,
       child: Scaffold(
         backgroundColor: AppColors.secondary,
-        appBar: AppBar(
-          backgroundColor: Colors.white,
-          elevation: 0,
-          scrolledUnderElevation: 0,
-          iconTheme: const IconThemeData(color: AppColors.accent),
-          title: Text('تعديل الملف الشخصي',
-              style: GoogleFonts.cairo(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 18,
-                  color: AppColors.accent)),
-          leading: IconButton(
-            tooltip: 'رجوع',
-            icon: const Icon(Icons.arrow_back_rounded),
-            onPressed: () =>
-            context.canPop() ? context.pop() : context.go('/profile'),
-          ),
+        appBar: BlueAppBar(
+          title: 'تعديل الملف الشخصي',
+          onBack: () =>
+          context.canPop() ? context.pop() : context.go('/profile'),
         ),
         body: _loading
             ? const Center(

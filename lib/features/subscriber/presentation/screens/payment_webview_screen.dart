@@ -13,6 +13,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../shared/widgets/blue_app_bar.dart';
 import '../../../../core/theme/brand_tokens.dart';
 import '../../../../core/utils/formatters.dart';
 import '../../../../shared/widgets/app_button.dart';
@@ -242,52 +243,14 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
       child: Directionality(
         textDirection: TextDirection.rtl,
         child: Scaffold(
-          appBar: AppBar(
-            flexibleSpace: Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [AppColors.accent, AppColors.primary],
-                  begin: Alignment.topRight,
-                  end: Alignment.bottomLeft,
-                ),
-              ),
-            ),
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            leading: GestureDetector(
-              onTap: () async {
-                final shouldPop = await _onWillPop();
-                if (shouldPop && mounted) context.go('/home');
-              },
-              child: Container(
-                margin: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: AppColors.white.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Icon(Icons.arrow_forward_rounded, color: AppColors.white, size: 20),
-              ),
-            ),
-            title: Column(
-              children: [
-                Text(
-                  _isMockCheckout ? 'دفع تجريبي' : 'إتمام الدفع',  // ← label مختلف للـ Mock
-                  style: GoogleFonts.cairo(
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.white,
-                    fontSize: 16,
-                  ),
-                ),
-                Text(
-                  '${Fmt.money2(widget.session.totalAmount)} — ${Fmt.months(widget.session.months.length)}',
-                  style: GoogleFonts.cairo(
-                    fontSize: 11,
-                    color: AppColors.white.withOpacity(0.8),
-                  ),
-                ),
-              ],
-            ),
-            centerTitle: true,
+          appBar: BlueAppBar(
+            title: _isMockCheckout ? 'دفع تجريبي' : 'إتمام الدفع',
+            subtitle:
+            '${Fmt.money2(widget.session.totalAmount)} — ${Fmt.months(widget.session.months.length)}',
+            onBack: () async {
+              final shouldPop = await _onWillPop();
+              if (shouldPop && mounted) context.go('/home');
+            },
           ),
           body: Stack(
             children: [

@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../shared/widgets/brand_backdrop.dart';
 import '../../../../core/utils/formatters.dart';
 import '../../../../shared/widgets/app_dialogs.dart';
 import '../../data/models/subscriber_models.dart';
@@ -48,6 +49,14 @@ class _ProfileScreenState extends State<ProfileScreen>
     _loadProfile();
   }
 
+  void _playEntrance() {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _animController.value = 1; // «تقليل الحركة»: بلا أنيميشن
+    } else {
+      _animController.forward(from: 0);
+    }
+  }
+
   @override
   void dispose() {
     _animController.dispose();
@@ -60,7 +69,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       final profile = await _repo.getUserProfile();
       if (mounted) {
         setState(() => _profile = profile);
-        _animController.forward(from: 0);
+        _playEntrance();
       }
     } catch (e) {
       if (mounted) _showError(e.toString());
@@ -186,16 +195,18 @@ class _ProfileScreenState extends State<ProfileScreen>
           expandedHeight: 200,
           pinned: true,
           backgroundColor: AppColors.primary,
-          leading: GestureDetector(
-            onTap: () => context.canPop() ? context.pop() : context.go('/home'),
-            child: Container(
-              margin: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: AppColors.white.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(10),
+          leading: Padding(
+            padding: const EdgeInsets.all(4),
+            child: IconButton(
+              tooltip: 'رجوع',
+              color: AppColors.white,
+              style: IconButton.styleFrom(
+                backgroundColor: AppColors.white.withAlpha(38),
               ),
-              child: const Icon(Icons.arrow_forward_rounded,
-                  color: AppColors.white, size: 20),
+              // arrow_back يُعكس في RTL فيشير يميناً (كان arrow_forward = معكوساً)
+              icon: const Icon(Icons.arrow_back_rounded),
+              onPressed: () =>
+              context.canPop() ? context.pop() : context.go('/home'),
             ),
           ),
           actions: [
@@ -218,41 +229,8 @@ class _ProfileScreenState extends State<ProfileScreen>
             background: Stack(
               fit: StackFit.expand,
               children: [
-                // Gradient
-                Container(
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [AppColors.accent, AppColors.primary],
-                      begin: Alignment.topRight,
-                      end: Alignment.bottomLeft,
-                    ),
-                  ),
-                ),
-                // Decorative circles
-                Positioned(
-                  top: -40,
-                  left: -40,
-                  child: Container(
-                    width: 200,
-                    height: 200,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: AppColors.white.withOpacity(0.04),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  bottom: -60,
-                  right: -30,
-                  child: Container(
-                    width: 220,
-                    height: 220,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: AppColors.white.withOpacity(0.04),
-                    ),
-                  ),
-                ),
+                // خلفية الهيدر الأزرق الموحّدة (نفس شاشات الدخول)
+                const BlueBackdrop(),
                 // User info
                 SafeArea(
                   child: Padding(
@@ -462,6 +440,55 @@ class _ProfileScreenState extends State<ProfileScreen>
                         ],
                       );
                     }),
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+
+                // C2) حول التطبيق والخصوصية
+                Semantics(
+                  button: true,
+                  label: 'حول التطبيق والخصوصية',
+                  excludeSemantics: true,
+                  child: Material(
+                    color: AppColors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(16),
+                      onTap: () => context.push('/about'),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(minHeight: 56),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.info_outline_rounded,
+                                color: AppColors.primary,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  'حول التطبيق والخصوصية',
+                                  style: GoogleFonts.cairo(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.accent,
+                                  ),
+                                ),
+                              ),
+                              const Icon(
+                                Icons.chevron_right_rounded,
+                                color: AppColors.textMuted,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
 

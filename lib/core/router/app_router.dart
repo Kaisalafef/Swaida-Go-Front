@@ -47,6 +47,7 @@ import '../../features/subscriber/presentation/screens/subscriber_home_screen.da
 import '../../features/subscriber/presentation/screens/payment_webview_screen.dart';
 import '../../features/subscriber/presentation/screens/confirmation_screen.dart';
 import '../../features/subscriber/presentation/screens/profile_screen.dart';
+import '../../features/subscriber/presentation/screens/about_screen.dart';
 import '../../features/subscriber/data/models/subscriber_models.dart';
 import '../constants/app_colors.dart';
 import '../network/session_guard.dart';
@@ -216,6 +217,12 @@ final GoRouter appRouter = GoRouter(
       name: 'profile',
       builder: (context, state) =>
           BackGuard(fallback: '/home', child: const ProfileScreen()),
+    ),
+    GoRoute(
+      path: '/about',
+      name: 'about',
+      builder: (context, state) =>
+          BackGuard(fallback: '/profile', child: const AboutScreen()),
     ),
 
     // ── Admin ─────────────────────────────────────────────
