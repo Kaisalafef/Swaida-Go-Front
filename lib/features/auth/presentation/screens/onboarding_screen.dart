@@ -137,15 +137,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      // Back never closes the app directly:
-      //   page 2/3 → previous page
-      //   page 1   → "press back again to exit" (ExitConfirm)
-      canPop: false,
-      // `onPopInvoked` is the API on Flutter < 3.22. On 3.22+ it still works
-      // (deprecated); switch to onPopInvokedWithResult after upgrading.
-      onPopInvoked: (didPop) {
-        if (didPop || _animating || _finishing) return;
+    return BackGuard(
+      onBack: () async {
+        if (_animating || _finishing) return;
         if (_isFirst) {
           ExitConfirm.handle(context);
         } else {

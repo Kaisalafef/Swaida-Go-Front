@@ -11,10 +11,11 @@ import 'core/constants/app_strings.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
 import 'firebase_options.dart'; // يُولَّد تلقائياً بـ: flutterfire configure
-
+import 'shared/widgets/back_guard.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  BackGuardObserver.install();
   // Firebase و dotenv مستقلان: نشغّلهما معاً (الوقت = الأبطأ لا المجموع).
   // الفشل في الإصدار لا يُسقط التطبيق قبل أن يرسم أي شاشة (كان يبقى على
   // الشاشة الأصلية فقط)؛ أما في التطوير (debug) فيُعاد رمي الخطأ لتراه فوراً.

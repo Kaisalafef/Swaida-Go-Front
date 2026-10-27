@@ -1,17 +1,14 @@
 // lib/shared/widgets/back_guard.dart
 //
-// سياسة زر الرجوع في أندرويد — بدل أن يُغلق التطبيق فجأة:
+// سياسة زر الرجوع في أندرويد (يعمل مع go_router 13 / Flutter 3.19):
+//   • شاشة فوقها شاشة أخرى في المكدس (push)  → رجوع عادي (pop)
+//   • شاشة لها onBack مخصص                    → يُنفَّذ onBack
+//   • شاشة فرعية وصلنا لها بـ context.go       → تعود للشاشة الأم [fallback]
+//   • شاشة جذرية (login / home / dashboard)    → «اضغط مرة أخرى للخروج»
 //
-//   • الشاشة فوقها شاشة أخرى في المكدس (push)  → رجوع عادي (pop)
-//   • شاشة فرعية وصلنا لها بـ context.go          → تعود للشاشة الأم [fallback]
-//   • شاشة جذرية (login / home / dashboard …)    → «اضغط مرة أخرى للخروج»
-//
-// السبب الجذري: التطبيق يتنقل بـ context.go (يستبدل المكدس كاملاً)، فتصير كل
-// شاشة هي الوحيدة في المكدس وزر النظام لا يجد ما يرجع إليه فيُغلق التطبيق.
-// تُطبَّق من app_router.dart في مكان واحد بدل تعديل كل شاشة.
-//
-// ملاحظة: لا تلفّ بها شاشة لديها PopScope/WillPopScope خاص بها (onboarding،
-// forgot-password، payment)؛ فمع وجود اثنين يُستدعى كلاهما.
+// السبب الجذري: PopScope لا يُستدعى على الشاشة الجذرية مع go_router 13،
+// فنعترض زر النظام بـ WidgetsBindingObserver يُسجَّل قبل الـ Router
+// (BackGuardObserver.install() في main()).
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -59,12 +56,13 @@ class ExitConfirm {
   }
 }
 
-class BackGuard extends StatelessWidget {
+class BackGuard extends StatefulWidget {
   const BackGuard({
     super.key,
     required this.child,
     this.fallback,
     this.swallow = false,
+    this.onBack,
   });
 
   final Widget child;
@@ -76,22 +74,86 @@ class BackGuard extends StatelessWidget {
   /// يتجاهل زر الرجوع تماماً (للـ Splash أثناء التحميل).
   final bool swallow;
 
+  /// سلوك مخصص للشاشة (onboarding، forgot-password، payment). له الأولوية.
+  final Future<void> Function()? onBack;
+
+  @override
+  State<BackGuard> createState() => _BackGuardState();
+}
+
+class _BackGuardState extends State<BackGuard> {
+  @override
+  void initState() {
+    super.initState();
+    BackGuardObserver._active.add(this);
+  }
+
+  @override
+  void dispose() {
+    BackGuardObserver._active.remove(this);
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
+    // canPop:false يُعلم أندرويد 13+ أن Flutter هو من يعالج الرجوع.
+    // المعالجة الفعلية تتم في BackGuardObserver.
     return PopScope(
-      // يوجد شاشة تحتي → دع النظام يعمل pop عادياً (مع أنيميشنه).
-      canPop: !swallow && context.canPop(),
-      // onPopInvoked هو الـ API في Flutter < 3.22 (يعمل أيضاً في الأحدث).
-      onPopInvoked: (didPop) {
-        if (didPop || swallow) return;
-        final target = fallback;
-        if (target != null) {
-          context.go(target);
-        } else {
-          ExitConfirm.handle(context);
-        }
-      },
-      child: child,
+      canPop: false,
+      onPopInvoked: (_) {},
+      child: widget.child,
     );
+  }
+}
+
+class BackGuardObserver with WidgetsBindingObserver {
+  BackGuardObserver._();
+
+  static final List<_BackGuardState> _active = <_BackGuardState>[];
+  static bool _installed = false;
+
+  /// استدعِها مرة واحدة في main() قبل runApp.
+  static void install() {
+    if (_installed) return;
+    _installed = true;
+    WidgetsBinding.instance.addObserver(BackGuardObserver._());
+  }
+
+  @override
+  Future<bool> didPopRoute() async {
+    // الشاشة الحالية الظاهرة فقط (إن كان حوار/شيت مفتوحاً فهو الحالي
+    // فنترك الرجوع الافتراضي يغلقه).
+    _BackGuardState? current;
+    for (final s in _active.reversed) {
+      if (!s.mounted) continue;
+      final route = ModalRoute.of(s.context);
+      if (route != null && route.isCurrent) {
+        current = s;
+        break;
+      }
+    }
+    if (current == null) return false;
+
+    final w = current.widget;
+    if (w.swallow) return true;
+
+    if (w.onBack != null) {
+      await w.onBack!();
+      return true;
+    }
+
+    if (!current.mounted) return true;
+    final router = GoRouter.of(current.context);
+    if (router.canPop()) {
+      router.pop();
+      return true;
+    }
+    final target = w.fallback;
+    if (target != null) {
+      router.go(target);
+      return true;
+    }
+    ExitConfirm.handle(current.context);
+    return true;
   }
 }

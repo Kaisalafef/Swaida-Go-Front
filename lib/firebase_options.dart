@@ -50,19 +50,19 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyCNjWD6mDMZ3pL01IU0klpxBjpkKf71NxA',
-    appId: '1:194161753901:android:45ebb44fbdf7c757f75da4',
-    messagingSenderId: '194161753901',
+    apiKey: 'AIzaSyBzmDVdELZPygUQQkO9k53s9GBMAM_DFss',
+    appId: '1:47623649940:android:308e3a629a2f41a87d1281',
+    messagingSenderId: '47623649940',
     projectId: 'swaida-go',
     storageBucket: 'swaida-go.firebasestorage.app',
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyAxyyvoXuAJ0aSB04tgGiG-glHlxL02xoM',
-    appId: '1:194161753901:ios:28bc182e5632c2e1f75da4',
-    messagingSenderId: '194161753901',
+    apiKey: 'AIzaSyBzmDVdELZPygUQQkO9k53s9GBMAM_DFss',
+    appId: '1:47623649940:android:308e3a629a2f41a87d1281',
+    messagingSenderId: '47623649940',
     projectId: 'swaida-go',
     storageBucket: 'swaida-go.firebasestorage.app',
-    iosBundleId: 'com.example.swidaGo',
+    iosBundleId: 'com.Sweidago.app',
   );
 }

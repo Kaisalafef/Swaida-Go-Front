@@ -13,6 +13,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../shared/widgets/back_guard.dart';
 import '../../../../shared/widgets/blue_app_bar.dart';
 import '../../../../core/theme/brand_tokens.dart';
 import '../../../../core/utils/formatters.dart';
@@ -234,11 +235,10 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async {
+    return BackGuard(
+      onBack: () async {
         final shouldPop = await _onWillPop();
         if (shouldPop && mounted) context.go('/home');
-        return false;
       },
       child: Directionality(
         textDirection: TextDirection.rtl,

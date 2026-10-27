@@ -21,6 +21,7 @@ import '../../../../core/theme/brand_tokens.dart';
 import '../../../../shared/widgets/app_button.dart';
 import '../../../../shared/widgets/app_text_field.dart';
 import '../../../../shared/widgets/auth_scaffold.dart';
+import '../../../../shared/widgets/back_guard.dart';
 import '../../data/repositories/auth_repository.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
@@ -171,15 +172,12 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     // \u2066 … \u2069: يعزل البريد (LTR) داخل نص عربي فلا ينقلب ترتيبه.
     final email = '\u2066${_email.text.trim()}\u2069';
 
-    return PopScope(
-      // الخطوة 2: زر الرجوع في النظام يعود للخطوة 1 بدل إغلاق الشاشة.
-      canPop: !_codeSent && context.canPop(),
-      onPopInvoked: (didPop) {
-        if (didPop) return;
+    return BackGuard(
+      onBack: () async {
         if (_codeSent) {
           if (!_busy) _backToEmail();
         } else {
-          context.go('/login'); // لا شاشة تحتنا: لا نُغلق التطبيق
+          context.canPop() ? context.pop() : context.go('/login');
         }
       },
       child: AuthScaffold(
