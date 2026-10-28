@@ -1,4 +1,4 @@
-package com.example.swida_go;
+package com.Sweidago.app;
 
 import io.flutter.embedding.android.FlutterActivity;
 
