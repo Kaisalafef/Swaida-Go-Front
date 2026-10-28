@@ -22,7 +22,6 @@ class StaffRole {
   /// تعديل نسبة العمولة
   static bool canEditCommission(String? role) => role == admin;
 
-  /// إنشاء وتعطيل حسابات الموظفين
   static bool canManageStaff(String? role) => role == admin;
 
   static String label(String? role) {

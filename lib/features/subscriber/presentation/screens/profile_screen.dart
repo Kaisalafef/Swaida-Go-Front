@@ -11,6 +11,7 @@ import '../../../../core/utils/formatters.dart';
 import '../../../../shared/widgets/app_dialogs.dart';
 import '../../data/models/subscriber_models.dart';
 import '../../data/repositories/subscriber_repository.dart';
+import 'widgets/delete_account_dialog.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -113,6 +114,32 @@ class _ProfileScreenState extends State<ProfileScreen>
     _loggingOut = true;
     await _storage.deleteAll();
     if (mounted) context.go('/login');
+  }
+
+  bool _deleting = false;
+
+  Future<void> _deleteAccount() async {
+    if (_deleting) return;
+    final password = await showDeleteAccountDialog(context);
+    if (password == null || !mounted) return;
+
+    setState(() => _deleting = true);
+    try {
+      await _repo.deleteAccount(password: password);
+      await _storage.deleteAll();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('تم حذف حسابك وبياناتك', style: GoogleFonts.cairo()),
+        behavior: SnackBarBehavior.floating,
+      ));
+      context.go('/login');
+    } on SubscriberException catch (e) {
+      if (mounted) _showError(e.message);
+    } catch (_) {
+      if (mounted) _showError('تعذّر حذف الحساب. حاول لاحقاً.');
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
   }
 
   void _showError(String message) {
@@ -538,6 +565,63 @@ class _ProfileScreenState extends State<ProfileScreen>
                         ),
                         child: Text(
                           'خروج',
+                          style: GoogleFonts.cairo(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            color: AppColors.error,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
+                // D2) حذف الحساب (يتطلبه Google Play)
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: AppColors.errorLight,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'حذف الحساب',
+                              style: GoogleFonts.cairo(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                                color: AppColors.error,
+                              ),
+                            ),
+                            Text(
+                              'حذف حسابك وبياناتك نهائياً',
+                              style: GoogleFonts.cairo(
+                                fontSize: 12,
+                                color: AppColors.error.withOpacity(0.7),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      OutlinedButton(
+                        onPressed: _deleting ? null : _deleteAccount,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.error,
+                          side: const BorderSide(color: AppColors.error),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10)),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 10),
+                        ),
+                        child: Text(
+                          'حذف',
                           style: GoogleFonts.cairo(
                             fontWeight: FontWeight.bold,
                             fontSize: 13,

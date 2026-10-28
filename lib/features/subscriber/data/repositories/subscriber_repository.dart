@@ -216,6 +216,16 @@ class SubscriberRepository {
     }
   }
 
+  /// POST /account/delete — حذف الحساب نهائياً (يتطلب كلمة المرور)
+  Future<void> deleteAccount({required String password}) async {
+    try {
+      await _dio.post('/account/delete', data: {'password': password});
+    } on DioException catch (e) {
+      print(e);
+      throw SubscriberException(_mapDioError(e));
+    }
+  }
+
   // ══════════════════════════════════════════════════════
   //  PACKAGE CHANGE (زيادة / تقليل الباقة)
   // ══════════════════════════════════════════════════════
